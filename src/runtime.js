@@ -1,6 +1,6 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, renameSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
 const SCHEMA_VERSION = '1.5.0';
@@ -216,9 +216,8 @@ export class GepRuntime {
     };
     writeFileSync(join(tmpDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
-    // execSync imported at module top
-    execSync(`tar -czf "${outputPath}" -C "${tmpDir}" .`, { timeout: 30000 });
-    execSync(`rm -rf "${tmpDir}"`, { timeout: 5000 });
+    execFileSync('tar', ['-czf', outputPath, '-C', tmpDir, '.'], { timeout: 30000 });
+    rmSync(tmpDir, { recursive: true, force: true });
 
     return { ok: true, outputPath, manifest };
   }

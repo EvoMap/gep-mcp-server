@@ -9,8 +9,11 @@ import {
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import { GepRuntime } from './runtime.js';
 
 const ASSETS_DIR = process.env.GEP_ASSETS_DIR || resolve(process.cwd(), 'assets/gep');
@@ -203,7 +206,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const { uri } = request.params;
   switch (uri) {
     case 'gep://spec': {
-      const specPath = resolve(import.meta.dirname, '../../gep-protocol/spec/gep-spec-v1.md');
+      const specPath = resolve(__dirname, '../../gep-protocol/spec/gep-spec-v1.md');
       const content = existsSync(specPath) ? readFileSync(specPath, 'utf8') : 'GEP spec not found at ' + specPath;
       return { contents: [{ uri, mimeType: 'text/markdown', text: content }] };
     }
