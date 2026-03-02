@@ -201,10 +201,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'gep_status':
         return { content: [{ type: 'text', text: JSON.stringify(runtime.getStatus(), null, 2) }] };
       case 'gep_search_community': {
+        if (!args.query || typeof args.query !== 'string' || args.query.trim().length < 2) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'query must be a string with at least 2 characters' }) }], isError: true };
+        }
         const params = new URLSearchParams();
-        params.set('q', args.query || '');
-        if (args.type) params.set('type', args.type);
-        if (args.outcome) params.set('outcome', args.outcome);
+        params.set('q', args.query.trim().slice(0, 500));
+        if (args.type && ['Gene', 'Capsule'].includes(args.type)) params.set('type', args.type);
+        if (args.outcome && ['success', 'failed'].includes(args.outcome)) params.set('outcome', args.outcome);
         params.set('limit', String(args.limit || 10));
         params.set('include_context', 'true');
         const url = `${HUB_URL}/a2a/assets/semantic-search?${params.toString()}`;
