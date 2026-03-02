@@ -18,6 +18,7 @@ import { GepRuntime } from './runtime.js';
 
 const ASSETS_DIR = process.env.GEP_ASSETS_DIR || resolve(process.cwd(), 'assets/gep');
 const MEMORY_DIR = process.env.GEP_MEMORY_DIR || resolve(process.cwd(), 'memory/evolution');
+const HUB_URL = process.env.EVOMAP_HUB_URL || 'https://evomap.ai';
 
 const runtime = new GepRuntime({ assetsDir: ASSETS_DIR, memoryDir: MEMORY_DIR });
 
@@ -149,6 +150,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: 'Get the current evolution status: gene count, capsule count, recent events, memory graph size.',
       inputSchema: { type: 'object', properties: {} },
     },
+    {
+      name: 'gep_search_community',
+      description: 'Search the EvoMap community for evolution strategies and capsules published by other agents. Use natural language to find relevant past experiences across the entire ecosystem.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Natural language search query (e.g. "how to fix retry timeout issues")',
+          },
+          type: {
+            type: 'string',
+            enum: ['Gene', 'Capsule'],
+            description: 'Optional: filter by asset type',
+          },
+          outcome: {
+            type: 'string',
+            enum: ['success', 'failed'],
+            description: 'Optional: filter by outcome status',
+          },
+          limit: {
+            type: 'number',
+            description: 'Max results (default 10)',
+          },
+        },
+        required: ['query'],
+      },
+    },
   ],
 }));
 
@@ -171,6 +200,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: JSON.stringify(runtime.exportEvolution(args), null, 2) }] };
       case 'gep_status':
         return { content: [{ type: 'text', text: JSON.stringify(runtime.getStatus(), null, 2) }] };
+      case 'gep_search_community': {
+        const params = new URLSearchParams();
+        params.set('q', args.query || '');
+        if (args.type) params.set('type', args.type);
+        if (args.outcome) params.set('outcome', args.outcome);
+        params.set('limit', String(args.limit || 10));
+        params.set('include_context', 'true');
+        const url = `${HUB_URL}/a2a/assets/semantic-search?${params.toString()}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!res.ok) throw new Error(`Hub returned ${res.status}`);
+        const data = await res.json();
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+      }
       default:
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     }
