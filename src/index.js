@@ -229,7 +229,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     {
       uri: 'gep://spec',
       name: 'GEP Protocol Specification',
-      description: 'The complete Gene Expression Protocol specification',
+      description: 'The complete Genome Evolution Protocol specification',
       mimeType: 'text/markdown',
     },
     {

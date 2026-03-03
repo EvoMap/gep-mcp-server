@@ -1,7 +1,7 @@
 {
   "name": "@evomap/gep-mcp-server",
   "version": "1.0.0",
-  "description": "MCP Server that exposes GEP (Gene Expression Protocol) evolution capabilities to any MCP-compatible AI agent",
+  "description": "MCP Server that exposes GEP (Genome Evolution Protocol) evolution capabilities to any MCP-compatible AI agent",
   "main": "src/index.js",
   "type": "module",
   "bin": {
