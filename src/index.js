@@ -23,7 +23,7 @@ const HUB_URL = process.env.EVOMAP_HUB_URL || 'https://evomap.ai';
 const runtime = new GepRuntime({ assetsDir: ASSETS_DIR, memoryDir: MEMORY_DIR });
 
 const server = new Server(
-  { name: 'gep-mcp-server', version: '1.0.1' },
+  { name: 'gep-mcp-server', version: '1.0.2' },
   { capabilities: { tools: {}, resources: {} } }
 );
 

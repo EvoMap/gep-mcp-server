@@ -16,7 +16,8 @@ export class GepRuntime {
     this.store.ensureFiles();
   }
 
-  evolve({ context, intent }) {
+  evolve(args) {
+    const { context, intent } = args || {};
     const signals = this._extractSignals(context);
 
     if (intent) {
@@ -96,7 +97,8 @@ export class GepRuntime {
     };
   }
 
-  recall({ query, signals }) {
+  recall(args) {
+    const { query, signals } = args || {};
     const events = this._readGraphEvents(500);
     const querySignals = signals || this._extractSignals(query);
     const queryKey = this._computeSignalKey(querySignals);
@@ -130,7 +132,8 @@ export class GepRuntime {
     };
   }
 
-  recordOutcome({ geneId, signals, status, score, summary }) {
+  recordOutcome(args) {
+    const { geneId, signals, status, score, summary } = args || {};
     const signalKey = this._computeSignalKey(signals);
     const ev = {
       type: 'MemoryGraphEvent',
@@ -178,7 +181,8 @@ export class GepRuntime {
     };
   }
 
-  installGene({ gene }) {
+  installGene(args) {
+    const { gene } = args || {};
     if (!gene || gene.type !== 'Gene' || !gene.id) {
       return { ok: false, error: 'Invalid gene: must have type="Gene" and a non-empty id' };
     }
@@ -188,7 +192,8 @@ export class GepRuntime {
     return { ok: true, installed: gene.id };
   }
 
-  exportEvolution({ outputPath, agentName }) {
+  exportEvolution(args) {
+    let { outputPath, agentName } = args || {};
     const resolvedOutput = resolve(outputPath);
     const allowedRoots = [resolve(this.assetsDir), resolve(this.memoryDir, '..')];
     if (!allowedRoots.some(root => resolvedOutput.startsWith(root + '/'))) {
@@ -217,7 +222,7 @@ export class GepRuntime {
       created_at: new Date().toISOString(),
       agent_name: agentName || 'unknown',
       statistics: this.getStatus().statistics,
-      source: { platform: 'gep-mcp-server', version: '1.0.0' },
+      source: { platform: 'gep-mcp-server', version: '1.0.2' },
     };
     writeFileSync(join(tmpDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
@@ -236,7 +241,7 @@ export class GepRuntime {
     const genes = this.store.loadGenes();
     const capsules = this.store.loadCapsules();
     const events = this.store.readAllEvents();
-    const graphEvents = this._readGraphEvents(100);
+    const graphEntryCount = this._countGraphEntries();
 
     const recentEvents = events.slice(-5).map(e => ({
       id: e.id,
@@ -253,7 +258,7 @@ export class GepRuntime {
         total_genes: genes.length,
         total_capsules: capsules.length,
         total_events: events.length,
-        memory_graph_entries: graphEvents.length,
+        memory_graph_entries: graphEntryCount,
         success_rate: events.length > 0 ? Math.round((successCount / events.length) * 100) / 100 : 0,
       },
       recent_events: recentEvents,
@@ -370,6 +375,14 @@ export class GepRuntime {
     if (cat === 'repair') return 'reduce runtime errors, increase stability';
     if (cat === 'innovate') return 'explore new strategy combinations';
     return 'improve success rate and efficiency';
+  }
+
+  _countGraphEntries() {
+    try {
+      if (!existsSync(this.memoryGraphPath)) return 0;
+      const raw = readFileSync(this.memoryGraphPath, 'utf8');
+      return raw.split('\n').filter(l => l.trim()).length;
+    } catch { return 0; }
   }
 
   _readGraphEvents(limit = 1000) {
