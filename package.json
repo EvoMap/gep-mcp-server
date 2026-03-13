@@ -16,11 +16,14 @@
     "self-evolution",
     "evomap"
   ],
+  "files": [
+    "src"
+  ],
   "author": "EvoMap",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/evomap-ai/gep-mcp-server"
+    "url": "https://github.com/EvoMap/gep-mcp-server"
   },
   "engines": {
     "node": ">=18.0.0"
