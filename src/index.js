@@ -23,7 +23,7 @@ const HUB_URL = process.env.EVOMAP_HUB_URL || 'https://evomap.ai';
 const runtime = new GepRuntime({ assetsDir: ASSETS_DIR, memoryDir: MEMORY_DIR });
 
 const server = new Server(
-  { name: 'gep-mcp-server', version: '1.0.0' },
+  { name: 'gep-mcp-server', version: '1.0.1' },
   { capabilities: { tools: {}, resources: {} } }
 );
 
@@ -208,7 +208,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         params.set('q', args.query.trim().slice(0, 500));
         if (args.type && ['Gene', 'Capsule'].includes(args.type)) params.set('type', args.type);
         if (args.outcome && ['success', 'failed'].includes(args.outcome)) params.set('outcome', args.outcome);
-        params.set('limit', String(args.limit || 10));
+        params.set('limit', String(Math.min(Math.max(1, parseInt(args.limit, 10) || 10), 50)));
         params.set('include_context', 'true');
         const url = `${HUB_URL}/a2a/assets/semantic-search?${params.toString()}`;
         const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
@@ -251,8 +251,14 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const { uri } = request.params;
   switch (uri) {
     case 'gep://spec': {
-      const specPath = resolve(__dirname, '../../gep-protocol/spec/gep-spec-v1.md');
-      const content = existsSync(specPath) ? readFileSync(specPath, 'utf8') : 'GEP spec not found at ' + specPath;
+      const candidates = [
+        resolve(ASSETS_DIR, 'gep-spec-v1.md'),
+        resolve(__dirname, '../../gep-protocol/spec/gep-spec-v1.md'),
+      ];
+      const specPath = candidates.find(p => existsSync(p));
+      const content = specPath
+        ? readFileSync(specPath, 'utf8')
+        : 'GEP spec not found. Place gep-spec-v1.md in your GEP_ASSETS_DIR or install gep-protocol alongside this package.';
       return { contents: [{ uri, mimeType: 'text/markdown', text: content }] };
     }
     case 'gep://genes':

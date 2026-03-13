@@ -189,6 +189,11 @@ export class GepRuntime {
   }
 
   exportEvolution({ outputPath, agentName }) {
+    const resolvedOutput = resolve(outputPath);
+    const allowedRoots = [resolve(this.assetsDir), resolve(this.memoryDir, '..')];
+    if (!allowedRoots.some(root => resolvedOutput.startsWith(root + '/'))) {
+      outputPath = join(this.assetsDir, 'export.gepx');
+    }
     const tmpDir = `${outputPath}.tmp`;
     mkdirSync(join(tmpDir, 'genes'), { recursive: true });
     mkdirSync(join(tmpDir, 'capsules'), { recursive: true });
@@ -216,7 +221,12 @@ export class GepRuntime {
     };
     writeFileSync(join(tmpDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
-    execFileSync('tar', ['-czf', outputPath, '-C', tmpDir, '.'], { timeout: 30000 });
+    try {
+      execFileSync('tar', ['-czf', outputPath, '-C', tmpDir, '.'], { timeout: 30000 });
+    } catch (err) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      return { ok: false, error: `tar failed: ${err.message}. Ensure tar is available on your system.` };
+    }
     rmSync(tmpDir, { recursive: true, force: true });
 
     return { ok: true, outputPath, manifest };
@@ -376,6 +386,19 @@ export class GepRuntime {
   _appendToGraph(event) {
     mkdirSync(this.memoryDir, { recursive: true });
     appendFileSync(this.memoryGraphPath, JSON.stringify(event) + '\n', 'utf8');
+    this._maybeTruncateGraph();
+  }
+
+  _maybeTruncateGraph() {
+    const MAX_ENTRIES = 5000;
+    try {
+      if (!existsSync(this.memoryGraphPath)) return;
+      const raw = readFileSync(this.memoryGraphPath, 'utf8');
+      const lines = raw.split('\n').filter(l => l.trim());
+      if (lines.length <= MAX_ENTRIES) return;
+      const kept = lines.slice(lines.length - MAX_ENTRIES);
+      writeFileSync(this.memoryGraphPath, kept.join('\n') + '\n', 'utf8');
+    } catch { /* best effort */ }
   }
 
   _recordToGraph({ kind, signals, gene, mutation }) {
