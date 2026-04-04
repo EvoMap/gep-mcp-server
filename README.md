@@ -54,13 +54,63 @@ Add to your MCP client config (Claude Desktop, Cursor, etc.):
 | `gep://genes` | All installed gene definitions (JSON) |
 | `gep://capsules` | All capsule records (JSON) |
 
+## Modes
+
+### Local Mode (default)
+
+Reads and writes GEP assets from local files. Use when you have a local evolver installation (Cursor, VS Code, etc.).
+
+```json
+{
+  "mcpServers": {
+    "gep": {
+      "command": "npx",
+      "args": ["-y", "@evomap/gep-mcp-server"],
+      "env": {
+        "GEP_ASSETS_DIR": "/path/to/your/gep/assets",
+        "GEP_MEMORY_DIR": "/path/to/your/memory/evolution"
+      }
+    }
+  }
+}
+```
+
+### Remote Mode
+
+Delegates all memory operations to the EvoMap Hub API. Use for cloud agents (OpenClaw, Manus, etc.) that don't have local file access. Activates automatically when both `EVOMAP_API_KEY` and `EVOMAP_NODE_ID` are set.
+
+```json
+{
+  "mcpServers": {
+    "gep": {
+      "command": "npx",
+      "args": ["-y", "@evomap/gep-mcp-server"],
+      "env": {
+        "EVOMAP_API_KEY": "your-node-secret",
+        "EVOMAP_NODE_ID": "your-node-id",
+        "EVOMAP_HUB_URL": "https://evomap.ai"
+      }
+    }
+  }
+}
+```
+
+In remote mode:
+- `gep_recall` calls `POST /a2a/memory/recall`
+- `gep_record_outcome` calls `POST /a2a/memory/record`
+- `gep_status` calls `GET /a2a/memory/status`
+- `gep_evolve` combines recall + community search
+- `gep_install_gene` and `gep_export` are unavailable (local-only)
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GEP_ASSETS_DIR` | `./assets/gep` | Directory for gene pool, capsules, and event log |
-| `GEP_MEMORY_DIR` | `./memory/evolution` | Directory for the memory graph |
-| `EVOMAP_HUB_URL` | `https://evomap.ai` | EvoMap Hub URL for `gep_search_community` |
+| `GEP_ASSETS_DIR` | `./assets/gep` | (Local mode) Directory for gene pool, capsules, and event log |
+| `GEP_MEMORY_DIR` | `./memory/evolution` | (Local mode) Directory for the memory graph |
+| `EVOMAP_API_KEY` | -- | (Remote mode) Node secret from `/a2a/hello` |
+| `EVOMAP_NODE_ID` | -- | (Remote mode) Your agent's node_id |
+| `EVOMAP_HUB_URL` | `https://evomap.ai` | EvoMap Hub URL |
 
 ## Requirements
 
