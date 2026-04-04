@@ -15,15 +15,19 @@ import { existsSync, readFileSync } from 'node:fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import { GepRuntime } from './runtime.js';
+import { RemoteRuntime } from './remote.js';
 
 const ASSETS_DIR = process.env.GEP_ASSETS_DIR || resolve(process.cwd(), 'assets/gep');
 const MEMORY_DIR = process.env.GEP_MEMORY_DIR || resolve(process.cwd(), 'memory/evolution');
 const HUB_URL = process.env.EVOMAP_HUB_URL || 'https://evomap.ai';
 
-const runtime = new GepRuntime({ assetsDir: ASSETS_DIR, memoryDir: MEMORY_DIR });
+const IS_REMOTE = !!(process.env.EVOMAP_API_KEY && process.env.EVOMAP_NODE_ID);
+const runtime = IS_REMOTE
+  ? new RemoteRuntime({ hubUrl: HUB_URL, nodeId: process.env.EVOMAP_NODE_ID, apiKey: process.env.EVOMAP_API_KEY })
+  : new GepRuntime({ assetsDir: ASSETS_DIR, memoryDir: MEMORY_DIR });
 
 const server = new Server(
-  { name: 'gep-mcp-server', version: '1.0.2' },
+  { name: 'gep-mcp-server', version: '1.1.0' },
   { capabilities: { tools: {}, resources: {} } }
 );
 
@@ -187,22 +191,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'gep_evolve':
-        return { content: [{ type: 'text', text: JSON.stringify(runtime.evolve(args), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.evolve(args), null, 2) }] };
       case 'gep_recall':
-        return { content: [{ type: 'text', text: JSON.stringify(runtime.recall(args), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.recall(args), null, 2) }] };
       case 'gep_record_outcome':
-        return { content: [{ type: 'text', text: JSON.stringify(runtime.recordOutcome(args), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.recordOutcome(args), null, 2) }] };
       case 'gep_list_genes':
-        return { content: [{ type: 'text', text: JSON.stringify(runtime.listGenes(args), null, 2) }] };
-      case 'gep_install_gene':
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.listGenes(args), null, 2) }] };
+      case 'gep_install_gene': {
+        if (IS_REMOTE) return { content: [{ type: 'text', text: 'gep_install_gene is only available in local mode' }], isError: true };
         return { content: [{ type: 'text', text: JSON.stringify(runtime.installGene(args), null, 2) }] };
-      case 'gep_export':
+      }
+      case 'gep_export': {
+        if (IS_REMOTE) return { content: [{ type: 'text', text: 'gep_export is only available in local mode' }], isError: true };
         return { content: [{ type: 'text', text: JSON.stringify(runtime.exportEvolution(args), null, 2) }] };
+      }
       case 'gep_status':
-        return { content: [{ type: 'text', text: JSON.stringify(runtime.getStatus(), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.getStatus(), null, 2) }] };
       case 'gep_search_community': {
         if (!args.query || typeof args.query !== 'string' || args.query.trim().length < 2) {
           return { content: [{ type: 'text', text: JSON.stringify({ error: 'query must be a string with at least 2 characters' }) }], isError: true };
+        }
+        if (IS_REMOTE) {
+          const data = await runtime.searchCommunity(args);
+          return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
         }
         const params = new URLSearchParams();
         params.set('q', args.query.trim().slice(0, 500));
@@ -273,7 +285,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('GEP MCP Server running on stdio');
+  console.error(`GEP MCP Server running on stdio (${IS_REMOTE ? 'remote' : 'local'} mode)`);
 }
 
 main().catch(err => {
