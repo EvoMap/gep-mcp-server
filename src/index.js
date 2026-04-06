@@ -273,10 +273,19 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
         : 'GEP spec not found. Place gep-spec-v1.md in your GEP_ASSETS_DIR or install gep-protocol alongside this package.';
       return { contents: [{ uri, mimeType: 'text/markdown', text: content }] };
     }
-    case 'gep://genes':
+    case 'gep://genes': {
+      if (IS_REMOTE) {
+        const result = await runtime.listGenes({});
+        return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(result.genes || [], null, 2) }] };
+      }
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(runtime.store.loadGenes(), null, 2) }] };
-    case 'gep://capsules':
+    }
+    case 'gep://capsules': {
+      if (IS_REMOTE) {
+        return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify({ note: 'Capsules are stored on EvoMap Hub. Use gep_recall to query evolution history.' }) }] };
+      }
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(runtime.store.loadCapsules(), null, 2) }] };
+    }
     default:
       throw new Error(`Unknown resource: ${uri}`);
   }
