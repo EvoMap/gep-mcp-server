@@ -27,7 +27,7 @@ const runtime = IS_REMOTE
   : new GepRuntime({ assetsDir: ASSETS_DIR, memoryDir: MEMORY_DIR });
 
 const server = new Server(
-  { name: 'gep-mcp-server', version: '1.1.0' },
+  { name: 'gep-mcp-server', version: '1.2.0' },
   { capabilities: { tools: {}, resources: {} } }
 );
 
@@ -67,19 +67,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             items: { type: 'string' },
             description: 'Optional: specific signal patterns to search for',
           },
+          limit: {
+            type: 'number',
+            description: 'Max results to return (default 10, max 50)',
+          },
         },
         required: ['query'],
       },
     },
     {
       name: 'gep_record_outcome',
-      description: 'Record the outcome of an evolution attempt. Call this after applying an evolution plan to provide feedback to the memory graph.',
+      description: 'Record the outcome of a task. Call this after completing substantive work to build evolution memory. The summary must describe both the problem and the solution.',
       inputSchema: {
         type: 'object',
         properties: {
           geneId: {
             type: 'string',
-            description: 'The gene ID that was used',
+            description: 'The gene ID that was used (use "ad_hoc" for non-gene-driven tasks)',
           },
           signals: {
             type: 'array',
@@ -89,7 +93,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           status: {
             type: 'string',
             enum: ['success', 'failed'],
-            description: 'Whether the evolution was successful',
+            description: 'Whether the task was successful',
           },
           score: {
             type: 'number',
@@ -97,10 +101,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           summary: {
             type: 'string',
-            description: 'Brief description of what happened',
+            description: 'Specific description of what happened: "Fixed X by doing Y" (required for useful recall)',
           },
         },
-        required: ['geneId', 'signals', 'status', 'score'],
+        required: ['geneId', 'signals', 'status', 'score', 'summary'],
       },
     },
     {
@@ -199,11 +203,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'gep_list_genes':
         return { content: [{ type: 'text', text: JSON.stringify(await runtime.listGenes(args), null, 2) }] };
       case 'gep_install_gene': {
-        if (IS_REMOTE) return { content: [{ type: 'text', text: 'gep_install_gene is only available in local mode' }], isError: true };
+        if (IS_REMOTE) return { content: [{ type: 'text', text: JSON.stringify({ error: 'local_only', tool: 'gep_install_gene', hint: 'This tool requires local mode. Set ASSETS_DIR and MEMORY_DIR instead of EVOMAP_API_KEY.' }) }], isError: true };
         return { content: [{ type: 'text', text: JSON.stringify(runtime.installGene(args), null, 2) }] };
       }
       case 'gep_export': {
-        if (IS_REMOTE) return { content: [{ type: 'text', text: 'gep_export is only available in local mode' }], isError: true };
+        if (IS_REMOTE) return { content: [{ type: 'text', text: JSON.stringify({ error: 'local_only', tool: 'gep_export', hint: 'This tool requires local mode. Set ASSETS_DIR and MEMORY_DIR instead of EVOMAP_API_KEY.' }) }], isError: true };
         return { content: [{ type: 'text', text: JSON.stringify(runtime.exportEvolution(args), null, 2) }] };
       }
       case 'gep_status':

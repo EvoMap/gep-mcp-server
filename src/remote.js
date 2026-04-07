@@ -25,12 +25,13 @@ export class RemoteRuntime {
   }
 
   async recall(args) {
-    const { query, signals } = args || {};
+    const { query, signals, limit } = args || {};
+    const effectiveLimit = Math.min(Math.max(1, parseInt(limit, 10) || 10), 50);
     return this._request('POST', '/a2a/memory/recall', {
       node_id: this.nodeId,
       query,
       signals,
-      limit: 20,
+      limit: effectiveLimit,
     });
   }
 
@@ -51,29 +52,66 @@ export class RemoteRuntime {
   }
 
   async evolve(args) {
-    const recallResult = await this.recall({ query: args?.context, signals: null });
+    const { context, intent } = args || {};
+    const intentSignals = intent ? [`intent:${intent}`] : [];
+    const recallResult = await this.recall({ query: context, signals: intentSignals.length ? intentSignals : null });
     const signals = recallResult.signals_extracted || [];
 
     let communityGenes = [];
     try {
-      const params = new URLSearchParams({ q: (args?.context || '').slice(0, 200), type: 'Gene', limit: '5' });
+      const searchQuery = intent
+        ? `${intent} ${(context || '').slice(0, 150)}`
+        : (context || '').slice(0, 200);
+      const params = new URLSearchParams({ q: searchQuery, type: 'Gene', limit: '5' });
       const searchResult = await this._request('GET', `/a2a/assets/semantic-search?${params}`);
       communityGenes = (searchResult.assets || []).slice(0, 3);
     } catch { /* best effort */ }
 
+    const matches = recallResult.matches || [];
+    const bestMatch = matches.length > 0 ? matches[0] : null;
+
+    const actionableAdvice = [];
+    if (bestMatch) {
+      const status = bestMatch.outcome?.status || bestMatch.status;
+      const summary = bestMatch.outcome?.summary || bestMatch.summary || '';
+      if (status === 'success') {
+        actionableAdvice.push(`Prior success (score ${bestMatch.score ?? 'N/A'}): ${summary}`);
+        actionableAdvice.push('Follow the same approach unless context has changed.');
+      } else if (status === 'failed') {
+        actionableAdvice.push(`Prior failure: ${summary}`);
+        actionableAdvice.push('Avoid repeating this approach -- try a different strategy.');
+      }
+    }
+
+    const geneStrategies = communityGenes
+      .filter(g => g.strategy || g.strategy_steps)
+      .map(g => ({
+        id: g.asset_id || g.id,
+        category: g.category,
+        summary: g.summary || g.description,
+        strategy: g.strategy || g.strategy_steps,
+      }));
+
     return {
       ok: true,
       mode: 'remote',
+      intent: intent || null,
       signals,
-      recall_matches: recallResult.matches || [],
+      recall_matches: matches,
+      best_match_advice: actionableAdvice.length > 0 ? actionableAdvice : null,
       community_genes: communityGenes.map(g => ({
         id: g.asset_id || g.id,
         category: g.category,
         summary: g.summary || g.description,
       })),
+      gene_strategies: geneStrategies.length > 0 ? geneStrategies : null,
       instructions: [
-        'Review recalled experiences above for patterns that worked or failed.',
-        'If a community gene matches your situation, follow its strategy.',
+        ...(actionableAdvice.length > 0
+          ? ['Apply the advice from prior experience above.']
+          : ['No prior experience found. Proceed with best judgment.']),
+        ...(geneStrategies.length > 0
+          ? ['Community gene strategies are available -- review and apply if relevant.']
+          : []),
         'After completing the task, call gep_record_outcome to record the result.',
       ],
     };
