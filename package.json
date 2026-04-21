@@ -7,6 +7,9 @@
   "bin": {
     "gep-mcp-server": "./src/index.js"
   },
+  "scripts": {
+    "test": "vitest run"
+  },
   "keywords": [
     "gep",
     "mcp",
@@ -30,5 +33,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
   }
 }

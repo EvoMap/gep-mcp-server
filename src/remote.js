@@ -1,11 +1,46 @@
 const DEFAULT_HUB_URL = 'https://evomap.ai';
 const TIMEOUT_MS = 15000;
 
+// Retry only for transient upstream failures (network errors, 502/503/504, 429).
+// Idempotent writes are whitelisted because the Hub dedupes on (node_id, summary, ts).
+const TRANSIENT_STATUSES = new Set([429, 502, 503, 504]);
+const IDEMPOTENT_WRITE_PATHS = new Set([
+  '/a2a/memory/record',
+  '/a2a/memory/recall',
+]);
+const RETRY_DELAYS_MS = [300, 900, 2100];
+
+function isIdempotentRequest(method, path) {
+  if (method === 'GET' || method === 'HEAD') return true;
+  const pathname = path.split('?')[0];
+  return IDEMPOTENT_WRITE_PATHS.has(pathname);
+}
+
+function parseRetryAfter(headerValue) {
+  if (!headerValue) return null;
+  const seconds = Number(headerValue);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(Math.round(seconds * 1000), 5000);
+  }
+  const dateMs = Date.parse(headerValue);
+  if (!Number.isNaN(dateMs)) {
+    const diff = dateMs - Date.now();
+    if (diff > 0) return Math.min(diff, 5000);
+  }
+  return null;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class RemoteRuntime {
-  constructor({ hubUrl, nodeId, apiKey }) {
+  constructor({ hubUrl, nodeId, apiKey, fetchImpl, sleepImpl }) {
     this.hubUrl = (hubUrl || DEFAULT_HUB_URL).replace(/\/+$/, '');
     this.nodeId = nodeId;
     this.apiKey = apiKey;
+    this._fetch = fetchImpl || ((url, opts) => fetch(url, opts));
+    this._sleep = sleepImpl || sleep;
   }
 
   async _request(method, path, body) {
@@ -14,14 +49,55 @@ export class RemoteRuntime {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${this.apiKey}`,
     };
-    const opts = { method, headers, signal: AbortSignal.timeout(TIMEOUT_MS) };
-    if (body) opts.body = JSON.stringify(body);
-    const res = await fetch(url, opts);
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Hub ${method} ${path} returned ${res.status}: ${text.slice(0, 200)}`);
+    const canRetry = isIdempotentRequest(method, path);
+    const maxAttempts = canRetry ? RETRY_DELAYS_MS.length + 1 : 1;
+    const payload = body ? JSON.stringify(body) : undefined;
+
+    let lastError;
+    let lastStatus;
+    let lastText = '';
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const opts = { method, headers, signal: AbortSignal.timeout(TIMEOUT_MS) };
+      if (payload !== undefined) opts.body = payload;
+
+      let res;
+      try {
+        res = await this._fetch(url, opts);
+      } catch (err) {
+        lastError = err;
+        lastStatus = null;
+        if (!canRetry || attempt === maxAttempts) {
+          throw new Error(
+            `Hub ${method} ${path} failed after ${attempt} attempt(s): ${err.message || err}`
+          );
+        }
+        await this._sleep(RETRY_DELAYS_MS[attempt - 1]);
+        continue;
+      }
+
+      if (res.ok) return res.json();
+
+      lastText = await res.text().catch(() => '');
+      lastStatus = res.status;
+      lastError = null;
+
+      const transient = TRANSIENT_STATUSES.has(res.status);
+      if (!transient || !canRetry || attempt === maxAttempts) {
+        throw new Error(
+          `Hub ${method} ${path} returned ${res.status} after ${attempt} attempt(s): ${lastText.slice(0, 200)}`
+        );
+      }
+
+      const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
+      const delay = retryAfter ?? RETRY_DELAYS_MS[attempt - 1];
+      await this._sleep(delay);
     }
-    return res.json();
+
+    const detail = lastStatus != null
+      ? `status ${lastStatus}: ${lastText.slice(0, 200)}`
+      : (lastError?.message ?? 'unknown');
+    throw new Error(`Hub ${method} ${path} exhausted retries: ${detail}`);
   }
 
   async recall(args) {
