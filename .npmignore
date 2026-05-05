@@ -1,0 +1,8 @@
+src/__tests__
+scripts
+.github
+.husky
+.vscode
+*.tgz
+node_modules
+.gitignore

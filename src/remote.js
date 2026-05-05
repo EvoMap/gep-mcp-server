@@ -1,3 +1,19 @@
+import {
+  PROTOCOL_NAME,
+  PROTOCOL_VERSION,
+  SCHEMA_VERSION,
+  buildValidationReport,
+  computeAssetId,
+  generateMessageId,
+  geneToSkillMd,
+  sanitizeSkillName,
+  sanitizeTags,
+  stampAsset,
+  validateCapsule,
+  validateGene,
+  validateValidationReport,
+} from './protocol.js';
+
 const DEFAULT_HUB_URL = 'https://evomap.ai';
 const TIMEOUT_MS = 15000;
 
@@ -219,5 +235,243 @@ export class RemoteRuntime {
     params.set('limit', String(Math.min(Math.max(1, parseInt(args?.limit, 10) || 10), 50)));
     params.set('include_context', 'true');
     return this._request('GET', `/a2a/assets/semantic-search?${params}`);
+  }
+
+  // -- publish / share --------------------------------------------------
+
+  // Publish a Gene+Capsule bundle (and an optional EvolutionEvent) to the
+  // Hub via /a2a/publish. The Hub dedupes on asset_id (sha256 over canonical
+  // JSON) so repeated calls with the same content are idempotent.
+  //
+  // Mirrors evolver-private-dev/src/gep/a2aProtocol.js#buildPublishBundle:
+  // payload = { assets: [Gene, Capsule, EvolutionEvent?], signature }.
+  // We omit the HMAC signature here because RemoteRuntime authenticates via
+  // EVOMAP_API_KEY (Bearer token); the Hub accepts API-key auth as the
+  // signature equivalent for MCP-attached agents.
+  async publishBundle(args) {
+    const { gene, capsule, event, chainId, modelName } = args || {};
+    const geneErrors = validateGene(gene);
+    const capsuleErrors = validateCapsule(capsule);
+    const errors = [...geneErrors, ...capsuleErrors];
+    if (errors.length > 0) {
+      throw new Error('publishBundle validation failed: ' + errors.join('; '));
+    }
+
+    // Stamp asset_id + schema_version on every asset before computing the
+    // bundle signature. Mutate copies so the caller's object stays clean.
+    const geneCopy = { ...gene };
+    const capsuleCopy = { ...capsule };
+    if (modelName && typeof modelName === 'string') {
+      geneCopy.model_name = modelName;
+      capsuleCopy.model_name = modelName;
+    }
+    stampAsset(geneCopy);
+    stampAsset(capsuleCopy);
+
+    const assets = [geneCopy, capsuleCopy];
+    if (event && event.type === 'EvolutionEvent') {
+      const eventCopy = { ...event };
+      if (modelName && typeof modelName === 'string') eventCopy.model_name = modelName;
+      stampAsset(eventCopy);
+      assets.push(eventCopy);
+    }
+
+    const message = {
+      protocol: PROTOCOL_NAME,
+      protocol_version: PROTOCOL_VERSION,
+      message_type: 'publish',
+      message_id: generateMessageId(),
+      sender_id: this.nodeId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        assets,
+        ...(chainId && typeof chainId === 'string' ? { chain_id: chainId } : {}),
+      },
+    };
+
+    const result = await this._request('POST', '/a2a/publish', message);
+    return {
+      ok: true,
+      gene_asset_id: geneCopy.asset_id,
+      capsule_asset_id: capsuleCopy.asset_id,
+      event_asset_id: assets[2]?.asset_id || null,
+      response: result,
+    };
+  }
+
+  // Convert a Gene into a SKILL.md document and publish it to the Hub skill
+  // store via /a2a/skill/store/publish. On 409 (already exists), automatically
+  // upgrades to PUT /a2a/skill/store/update -- callers should not need to
+  // distinguish "first publish" from "iterative update".
+  async publishSkill(args) {
+    const { gene, category, tags, changelog } = args || {};
+    const geneErrors = validateGene(gene);
+    if (geneErrors.length > 0) {
+      throw new Error('publishSkill validation failed: ' + geneErrors.join('; '));
+    }
+
+    const content = geneToSkillMd(gene);
+    const fmName = content.match(/^name:\s*(.+)$/m);
+    const baseId = fmName ? fmName[1].trim().toLowerCase().replace(/[^a-z0-9]+/g, '_') : (gene.id || 'unnamed').replace(/^gene_/, '');
+    const cleanedId = baseId.replace(/_?\d{10,}_?/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    const skillId = 'skill_' + (cleanedId || 'unnamed');
+
+    const cleanTags = sanitizeTags(tags && tags.length ? tags : gene.signals_match);
+    const body = {
+      sender_id: this.nodeId,
+      skill_id: skillId,
+      content,
+      category: category || gene.category || null,
+      tags: cleanTags,
+    };
+
+    try {
+      const data = await this._request('POST', '/a2a/skill/store/publish', body);
+      return { ok: true, skill_id: skillId, mode: 'create', response: data };
+    } catch (err) {
+      // Hub returns 409 on duplicate skill_id. Detect and retry as update.
+      if (/returned 409/.test(err.message)) {
+        const updateBody = { ...body, changelog: changelog || 'Iterative evolution update' };
+        const data = await this._request('PUT', '/a2a/skill/store/update', updateBody);
+        return { ok: true, skill_id: skillId, mode: 'update', response: data };
+      }
+      throw err;
+    }
+  }
+
+  // Submit a ValidationReport to the Hub. Either pass a pre-built report
+  // (already-stamped asset_id) or pass commands+results to build one here.
+  // Hub endpoint: POST /a2a/report
+  async submitValidationReport(args) {
+    const { report, commands, results, geneId, targetAssetId, targetLocalId } = args || {};
+    let finalReport;
+    if (report && typeof report === 'object') {
+      const errors = validateValidationReport(report);
+      if (errors.length > 0) throw new Error('validationReport invalid: ' + errors.join('; '));
+      finalReport = { ...report };
+      if (!finalReport.asset_id) finalReport.asset_id = computeAssetId(finalReport);
+    } else {
+      finalReport = buildValidationReport({
+        geneId: geneId || null,
+        commands: Array.isArray(commands) ? commands : [],
+        results: Array.isArray(results) ? results : [],
+      });
+    }
+
+    const message = {
+      protocol: PROTOCOL_NAME,
+      protocol_version: PROTOCOL_VERSION,
+      message_type: 'report',
+      message_id: generateMessageId(),
+      sender_id: this.nodeId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        target_asset_id: targetAssetId || null,
+        target_local_id: targetLocalId || null,
+        validation_report: finalReport,
+      },
+    };
+
+    const data = await this._request('POST', '/a2a/report', message);
+    return {
+      ok: true,
+      report_id: finalReport.id,
+      report_asset_id: finalReport.asset_id,
+      overall_ok: finalReport.overall_ok,
+      response: data,
+    };
+  }
+
+  // Withdraw a previously published asset. Routes to one of two Hub
+  // endpoints depending on what we are revoking:
+  //   - Skills (localId starts with `skill_`) -> POST /a2a/skill/store/delete
+  //   - Genes / Capsules / EvolutionEvents    -> POST /a2a/revoke (requires
+  //     target_asset_id, since those are content-addressed and the Hub
+  //     refuses to revoke by local_id alone)
+  async revoke(args) {
+    const { assetId, localId, reason } = args || {};
+    if (!assetId && !localId) {
+      throw new Error('revoke requires either assetId or localId');
+    }
+
+    // Skill store delete path -- localId tells us this is a skill.
+    if (localId && /^skill_/.test(localId)) {
+      const data = await this._request('POST', '/a2a/skill/store/delete', {
+        sender_id: this.nodeId,
+        skill_id: localId,
+        reason: reason || null,
+      });
+      return { ok: true, kind: 'skill', skill_id: localId, response: data };
+    }
+
+    // Asset revoke path -- Hub requires asset_id.
+    if (!assetId) {
+      throw new Error('revoke of a Gene/Capsule requires assetId (sha256 content hash). For skills, pass localId starting with "skill_".');
+    }
+
+    const message = {
+      protocol: PROTOCOL_NAME,
+      protocol_version: PROTOCOL_VERSION,
+      message_type: 'revoke',
+      message_id: generateMessageId(),
+      sender_id: this.nodeId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        target_asset_id: assetId,
+        target_local_id: localId || null,
+        reason: reason || null,
+      },
+    };
+    const data = await this._request('POST', '/a2a/revoke', message);
+    return { ok: true, kind: 'asset', target_asset_id: assetId, target_local_id: localId || null, response: data };
+  }
+
+  // -- identity / audit -------------------------------------------------
+
+  // GET /a2a/identity/:nodeId  (+ optional attestation)
+  async getIdentity(args) {
+    const targetNode = args?.nodeId || this.nodeId;
+    const profile = await this._request('GET', `/a2a/identity/${encodeURIComponent(targetNode)}`);
+    if (args?.includeAttestation) {
+      try {
+        const att = await this._request('GET', `/a2a/identity/${encodeURIComponent(targetNode)}/attestation`);
+        return { ok: true, profile, attestation: att };
+      } catch (err) {
+        return { ok: true, profile, attestation_error: err.message };
+      }
+    }
+    return { ok: true, profile };
+  }
+
+  // GET /a2a/audit/:nodeId?sender_id=... (Hub requires sender_id query)
+  async getAuditLogs(args) {
+    const targetNode = args?.nodeId || this.nodeId;
+    const limit = Math.min(Math.max(1, parseInt(args?.limit, 10) || 50), 200);
+    const offset = Math.max(0, parseInt(args?.offset, 10) || 0);
+    const params = new URLSearchParams({
+      sender_id: this.nodeId,
+      limit: String(limit),
+      offset: String(offset),
+    });
+    if (args?.action) params.set('action', String(args.action));
+    if (args?.since) params.set('since', String(args.since));
+    if (args?.until) params.set('until', String(args.until));
+    return this._request('GET', `/a2a/audit/${encodeURIComponent(targetNode)}?${params}`);
+  }
+
+  // -- introspection ---------------------------------------------------
+
+  // Convenience: schema/protocol versions baked into this MCP build. Useful
+  // for Hub-side compatibility checks and for agents auditing their own
+  // toolchain version.
+  getProtocolInfo() {
+    return {
+      schema_version: SCHEMA_VERSION,
+      protocol_name: PROTOCOL_NAME,
+      protocol_version: PROTOCOL_VERSION,
+      mode: 'remote',
+      node_id: this.nodeId,
+      hub_url: this.hubUrl,
+    };
   }
 }
