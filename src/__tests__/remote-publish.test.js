@@ -28,7 +28,12 @@ const validGene = {
   category: 'repair',
   signals_match: ['log_error', 'rate_limited'],
   summary: 'Retry transient hub failures with exponential backoff',
-  strategy: ['Detect transient', 'Sleep', 'Retry'],
+  strategy: [
+    'Detect transient hub failure category from status code and error body',
+    'Sleep with exponential backoff (300ms, 900ms, 2100ms) before each retry',
+    'Retry up to 3 times before bubbling the failure up to the caller',
+  ],
+  validation: ['node -e "require(\'assert\').strictEqual(typeof process.version,\'string\')"'],
 };
 
 const validCapsule = {
@@ -39,6 +44,7 @@ const validCapsule = {
   outcome: { status: 'success', score: 0.9 },
   confidence: 0.9,
   blast_radius: { files: 1, lines: 30 },
+  env_fingerprint: { platform: 'linux', arch: 'x64' },
 };
 
 describe('publishBundle', () => {

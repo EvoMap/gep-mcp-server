@@ -59,6 +59,29 @@ describe('protocol primitives', () => {
 });
 
 describe('validation', () => {
+  const validGene = {
+    type: 'Gene',
+    id: 'gene_x',
+    category: 'repair',
+    signals_match: ['error'],
+    strategy: [
+      'Detect transient hub failure category',
+      'Sleep with exponential backoff',
+    ],
+    validation: ['node -e "require(\'assert\').strictEqual(typeof process.version,\'string\')"'],
+  };
+
+  const validCapsule = {
+    type: 'Capsule',
+    id: 'c1',
+    trigger: ['log_error'],
+    summary: 'Fixed retry loop by adding exponential backoff',
+    confidence: 0.9,
+    blast_radius: { files: 1, lines: 30 },
+    env_fingerprint: { platform: 'linux', arch: 'x64' },
+    outcome: { status: 'success', score: 0.9 },
+  };
+
   it('rejects malformed Gene', () => {
     expect(validateGene(null)).toEqual(['gene must be an object']);
     const errs = validateGene({ id: 'x' });
@@ -66,23 +89,86 @@ describe('validation', () => {
     expect(errs.some((e) => /signals_match/.test(e))).toBe(true);
   });
 
+  it('rejects Gene with too-short strategy steps', () => {
+    const errs = validateGene({ ...validGene, strategy: ['short', 'tiny'] });
+    expect(errs.some((e) => /at least 15 characters/.test(e))).toBe(true);
+  });
+
+  it('rejects Gene missing validation commands', () => {
+    const errs = validateGene({ ...validGene, validation: [] });
+    expect(errs.some((e) => /validation/.test(e))).toBe(true);
+  });
+
   it('accepts well-formed Gene', () => {
-    expect(validateGene({
-      type: 'Gene',
-      id: 'gene_x',
-      category: 'repair',
-      signals_match: ['error'],
-    })).toEqual([]);
+    expect(validateGene(validGene)).toEqual([]);
   });
 
   it('rejects malformed Capsule (short summary)', () => {
-    const errs = validateCapsule({ type: 'Capsule', id: 'c1', trigger: ['x'], summary: 'short' });
+    const errs = validateCapsule({ ...validCapsule, summary: 'short' });
     expect(errs.some((e) => /summary/.test(e))).toBe(true);
+  });
+
+  it('rejects Capsule missing hub-1.6.0 required fields', () => {
+    const errs = validateCapsule({
+      type: 'Capsule', id: 'c1', trigger: ['x'], summary: 'long enough summary text here',
+    });
+    expect(errs.some((e) => /confidence/.test(e))).toBe(true);
+    expect(errs.some((e) => /blast_radius/.test(e))).toBe(true);
+    expect(errs.some((e) => /env_fingerprint/.test(e))).toBe(true);
+    expect(errs.some((e) => /outcome/.test(e))).toBe(true);
+  });
+
+  it('rejects Capsule with out-of-range confidence', () => {
+    expect(validateCapsule({ ...validCapsule, confidence: 1.5 }).some((e) => /confidence/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, confidence: -0.1 }).some((e) => /confidence/.test(e))).toBe(true);
+  });
+
+  it('accepts well-formed Capsule', () => {
+    expect(validateCapsule(validCapsule)).toEqual([]);
   });
 
   it('validateValidationReport requires overall_ok boolean', () => {
     expect(validateValidationReport({ type: 'ValidationReport', commands: [], overall_ok: true })).toEqual([]);
     expect(validateValidationReport({ type: 'ValidationReport', commands: [] })).toContain('report.overall_ok must be a boolean');
+  });
+});
+
+describe('stampAsset hub-compatibility quirks', () => {
+  it('strips capsule.outcome.notes before hashing so asset_id matches Hub', () => {
+    // Same logical capsule, one with the legal-on-wire-but-unhashed `notes`,
+    // one without. Hub strips notes during /a2a/publish recompute -- if our
+    // stamp does not match, we get capsule_asset_id_verification_failed.
+    const withNotes = {
+      type: 'Capsule', id: 'c_notes',
+      trigger: ['x'], summary: 'long enough summary text',
+      confidence: 0.9, blast_radius: { files: 1, lines: 1 },
+      env_fingerprint: { platform: 'linux', arch: 'x64' },
+      outcome: { status: 'success', notes: 'tests pass; reviewer happy' },
+    };
+    const withoutNotes = JSON.parse(JSON.stringify(withNotes));
+    delete withoutNotes.outcome.notes;
+    stampAsset(withNotes);
+    stampAsset(withoutNotes);
+    expect(withNotes.outcome).toEqual({ status: 'success' });
+    expect(withNotes.asset_id).toBe(withoutNotes.asset_id);
+  });
+
+  it('preserves status + score on capsule outcome', () => {
+    const c = {
+      type: 'Capsule', id: 'c_score',
+      trigger: ['x'], summary: 'long enough summary text',
+      confidence: 0.9, blast_radius: { files: 1, lines: 1 },
+      env_fingerprint: { platform: 'linux', arch: 'x64' },
+      outcome: { status: 'success', score: 0.85, foo: 'gone' },
+    };
+    stampAsset(c);
+    expect(c.outcome).toEqual({ status: 'success', score: 0.85 });
+  });
+
+  it('does not touch outcome on non-Capsule assets', () => {
+    const g = { type: 'Gene', id: 'g_outcome', outcome: { whatever: true } };
+    stampAsset(g);
+    expect(g.outcome).toEqual({ whatever: true });
   });
 });
 
