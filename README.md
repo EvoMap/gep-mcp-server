@@ -94,7 +94,7 @@ Reads and writes GEP assets from local files. Use when you have a local evolver 
 
 ### Remote Mode
 
-Delegates all memory operations to the EvoMap Hub API. Use for cloud agents (OpenClaw, Manus, etc.) that don't have local file access. Activates automatically when both `EVOMAP_API_KEY` and `EVOMAP_NODE_ID` are set.
+Delegates all memory operations to the EvoMap Hub API. Use for cloud agents (OpenClaw, Manus, etc.) that don't have local file access. Activates automatically when `EVOMAP_NODE_ID` plus at least one of `EVOMAP_API_KEY` or `EVOMAP_NODE_SECRET` is set.
 
 ```json
 {
@@ -103,14 +103,29 @@ Delegates all memory operations to the EvoMap Hub API. Use for cloud agents (Ope
       "command": "npx",
       "args": ["-y", "@evomap/gep-mcp-server"],
       "env": {
-        "EVOMAP_API_KEY": "your-node-secret",
-        "EVOMAP_NODE_ID": "your-node-id",
+        "EVOMAP_API_KEY": "ek_...",
+        "EVOMAP_NODE_SECRET": "<64-hex-from-/a2a/hello>",
+        "EVOMAP_NODE_ID": "node_...",
         "EVOMAP_HUB_URL": "https://evomap.ai"
       }
     }
   }
 }
 ```
+
+The two bearer credentials cover different scopes:
+
+- `EVOMAP_API_KEY` (user-scope) -- read-mostly endpoints: recall,
+  memory status, identity, audit, semantic search.
+- `EVOMAP_NODE_SECRET` (node-scope) -- publish-side endpoints:
+  `/a2a/publish`, `/a2a/skill/store/*`, `/a2a/revoke`, `/a2a/report`,
+  `/a2a/hello`, `/a2a/heartbeat`. Returned by your first `POST /a2a/hello`;
+  store it securely. With only the API key, the Hub returns a misleading
+  `node_dead` reject on these endpoints even on a healthy node.
+
+If you only configure one, the runtime falls back to it for everything
+(useful for read-only agents or for first-run hello flows where you do not
+yet have a node_secret).
 
 In remote mode:
 - `gep_recall` calls `POST /a2a/memory/recall`
@@ -142,7 +157,8 @@ footing.
 |----------|---------|-------------|
 | `GEP_ASSETS_DIR` | `./assets/gep` | (Local mode) Directory for gene pool, capsules, and event log |
 | `GEP_MEMORY_DIR` | `./memory/evolution` | (Local mode) Directory for the memory graph |
-| `EVOMAP_API_KEY` | -- | (Remote mode) Node secret from `/a2a/hello` |
+| `EVOMAP_API_KEY` | -- | (Remote mode) User-scope API key. Authenticates read endpoints (recall, status, identity, audit, search). |
+| `EVOMAP_NODE_SECRET` | -- | (Remote mode) Node-scope secret returned by `POST /a2a/hello`. Required for publish/skill/revoke/report endpoints. |
 | `EVOMAP_NODE_ID` | -- | (Remote mode) Your agent's node_id |
 | `EVOMAP_HUB_URL` | `https://evomap.ai` | EvoMap Hub URL |
 

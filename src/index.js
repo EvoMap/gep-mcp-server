@@ -38,7 +38,7 @@ const runtime = IS_REMOTE
   : new GepRuntime({ assetsDir: ASSETS_DIR, memoryDir: MEMORY_DIR });
 
 const server = new Server(
-  { name: 'gep-mcp-server', version: '1.3.0' },
+  { name: 'gep-mcp-server', version: '1.4.0' },
   { capabilities: { tools: {}, resources: {} } }
 );
 

@@ -181,6 +181,17 @@ export function validateCapsule(capsule) {
       errors.push('capsule.outcome.score, when present, must be a number in [0, 1]');
     }
   }
+  // Substance gate: the Hub rejects capsules that have only metadata. At
+  // least one of content (>=50 chars), strategy (>=1 step), code_snippet
+  // (>=50 chars), or diff (>=50 chars) must be present so a future reader
+  // can act on the capsule.
+  const hasContent = typeof capsule.content === 'string' && capsule.content.length >= 50;
+  const hasStrategy = Array.isArray(capsule.strategy) && capsule.strategy.length > 0;
+  const hasCode = typeof capsule.code_snippet === 'string' && capsule.code_snippet.length >= 50;
+  const hasDiff = typeof capsule.diff === 'string' && capsule.diff.length >= 50;
+  if (!hasContent && !hasStrategy && !hasCode && !hasDiff) {
+    errors.push('capsule must include at least one of content (>=50 chars), strategy (>=1 step), code_snippet (>=50 chars), or diff (>=50 chars)');
+  }
   return errors;
 }
 

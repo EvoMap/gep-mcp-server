@@ -80,6 +80,7 @@ describe('validation', () => {
     blast_radius: { files: 1, lines: 30 },
     env_fingerprint: { platform: 'linux', arch: 'x64' },
     outcome: { status: 'success', score: 0.9 },
+    strategy: ['Detect transient error', 'Sleep with backoff before retry'],
   };
 
   it('rejects malformed Gene', () => {
@@ -123,8 +124,21 @@ describe('validation', () => {
     expect(validateCapsule({ ...validCapsule, confidence: -0.1 }).some((e) => /confidence/.test(e))).toBe(true);
   });
 
+  it('rejects metadata-only Capsule (no content/strategy/code/diff)', () => {
+    const meta = { ...validCapsule };
+    delete meta.strategy;
+    expect(validateCapsule(meta).some((e) => /content.*strategy.*code_snippet.*diff/.test(e))).toBe(true);
+  });
+
   it('accepts well-formed Capsule', () => {
     expect(validateCapsule(validCapsule)).toEqual([]);
+  });
+
+  it('accepts Capsule with content instead of strategy', () => {
+    const c = { ...validCapsule };
+    delete c.strategy;
+    c.content = 'a'.repeat(60);
+    expect(validateCapsule(c)).toEqual([]);
   });
 
   it('validateValidationReport requires overall_ok boolean', () => {

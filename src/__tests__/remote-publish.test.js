@@ -46,6 +46,7 @@ const validCapsule = {
   confidence: 0.9,
   blast_radius: { files: 1, lines: 30 },
   env_fingerprint: { platform: 'linux', arch: 'x64' },
+  strategy: ['Detect transient 5xx', 'Sleep with exponential backoff before retrying'],
 };
 
 describe('bearer auth selection', () => {
