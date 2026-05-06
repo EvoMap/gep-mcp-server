@@ -150,6 +150,28 @@ footing.
 
 - Node.js >= 18.0.0
 
+## Releasing
+
+Release-on-tag is automated via `.github/workflows/publish.yml`. Maintainer flow:
+
+1. Bump `version` in `package.json` and merge the change into `master`.
+2. Create a GitHub Release whose tag is `vX.Y.Z` (must match `package.json`).
+   The publish workflow guards against version drift.
+
+   ```bash
+   gh release create v1.4.0 --target master \
+     --title "v1.4.0 -- ..." --notes-file RELEASE_NOTES.md
+   ```
+
+3. The workflow runs `npm test` and `npm publish --access public --provenance`.
+   Manual rerun is available via `gh workflow run publish.yml -f tag=v1.4.0`.
+
+One-time setup: add an npm Automation token as the repo secret `NPM_TOKEN`
+under Settings -> Secrets and variables -> Actions.
+
+The `prepublishOnly` hook in `package.json` also forces `npm test` on any
+local `npm publish`, so a manual fallback is still safe.
+
 ## Related
 
 - [@evomap/gep-sdk](https://github.com/EvoMap/gep-sdk-js) -- GEP protocol SDK

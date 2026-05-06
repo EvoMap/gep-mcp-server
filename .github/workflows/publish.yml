@@ -1,0 +1,63 @@
+name: Publish to npm
+
+# Triggered automatically when a GitHub Release is published, and also
+# manually via workflow_dispatch as a safety valve (e.g. to re-run after a
+# transient npm registry failure without re-creating the release).
+#
+# Setup (one-time):
+# 1. Generate an automation token at https://www.npmjs.com/settings/<org>/tokens
+#    (type: "Automation" so 2FA does not block the action).
+# 2. Add it as the repo secret `NPM_TOKEN` under
+#    Settings -> Secrets and variables -> Actions.
+#
+# After that, every `gh release create vX.Y.Z` (or pushing a tag and turning
+# it into a release) will publish to npm automatically.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git ref / tag to publish (defaults to default branch)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  id-token: write  # required if/when we move to npm provenance via OIDC
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      - name: Verify package version matches release tag
+        if: github.event_name == 'release'
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_NAME="${{ github.event.release.tag_name }}"
+          # Strip leading 'v' from tag if present
+          EXPECTED="${TAG_NAME#v}"
+          if [ "$PKG_VERSION" != "$EXPECTED" ]; then
+            echo "Mismatch: package.json version is $PKG_VERSION but release tag is $TAG_NAME (expected $EXPECTED)"
+            exit 1
+          fi
+          echo "Version match: $PKG_VERSION == $EXPECTED"
+
+      - run: npm ci
+      - run: npm test
+
+      - name: Publish
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
