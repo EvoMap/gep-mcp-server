@@ -50,20 +50,55 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Endpoints that the Hub gates on a node-level Bearer secret rather than the
+// user-level API key. /a2a/publish in particular returns a misleading
+// `node_dead: zero credits + prolonged inactivity` reject when called with
+// an API-key Bearer, even on a perfectly healthy node, because the gate
+// reads "no node_secret presented" as "this node was never claimed by an
+// agent runtime". Routes outside this set keep working with the API key
+// (they only need user-scope auth).
+const NODE_SECRET_REQUIRED_PATHS = new Set([
+  '/a2a/publish',
+  '/a2a/skill/store/publish',
+  '/a2a/skill/store/update',
+  '/a2a/skill/store/delete',
+  '/a2a/revoke',
+  '/a2a/report',
+  '/a2a/hello',
+  '/a2a/heartbeat',
+]);
+
+function pickBearer({ nodeSecret, apiKey }, path) {
+  // Prefer node_secret on node-scoped endpoints when available; fall back to
+  // the API key if the caller hasn't fetched/stored a secret yet.
+  const pathname = path.split('?')[0];
+  if (NODE_SECRET_REQUIRED_PATHS.has(pathname) && nodeSecret) return nodeSecret;
+  return apiKey || nodeSecret;
+}
+
 export class RemoteRuntime {
-  constructor({ hubUrl, nodeId, apiKey, fetchImpl, sleepImpl }) {
+  // `apiKey` (user-scope) authenticates read-mostly endpoints. `nodeSecret`
+  // (node-scope, returned by POST /a2a/hello) is required for publish-side
+  // endpoints. Pass at least one. If both are present we pick automatically
+  // per endpoint.
+  constructor({ hubUrl, nodeId, apiKey, nodeSecret, fetchImpl, sleepImpl }) {
     this.hubUrl = (hubUrl || DEFAULT_HUB_URL).replace(/\/+$/, '');
     this.nodeId = nodeId;
-    this.apiKey = apiKey;
+    this.apiKey = apiKey || null;
+    this.nodeSecret = nodeSecret || null;
+    if (!this.apiKey && !this.nodeSecret) {
+      throw new Error('RemoteRuntime requires apiKey and/or nodeSecret');
+    }
     this._fetch = fetchImpl || ((url, opts) => fetch(url, opts));
     this._sleep = sleepImpl || sleep;
   }
 
   async _request(method, path, body) {
     const url = `${this.hubUrl}${path}`;
+    const bearer = pickBearer(this, path);
     const headers = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${this.apiKey}`,
+      'Authorization': `Bearer ${bearer}`,
     };
     const canRetry = isIdempotentRequest(method, path);
     const maxAttempts = canRetry ? RETRY_DELAYS_MS.length + 1 : 1;
@@ -245,9 +280,13 @@ export class RemoteRuntime {
   //
   // Mirrors evolver-private-dev/src/gep/a2aProtocol.js#buildPublishBundle:
   // payload = { assets: [Gene, Capsule, EvolutionEvent?], signature }.
-  // We omit the HMAC signature here because RemoteRuntime authenticates via
-  // EVOMAP_API_KEY (Bearer token); the Hub accepts API-key auth as the
-  // signature equivalent for MCP-attached agents.
+  //
+  // Auth: this endpoint is gated on the node-scoped Bearer secret returned
+  // by POST /a2a/hello (NOT the user-level EVOMAP_API_KEY). Pass it via
+  // the `nodeSecret` constructor option, or set EVOMAP_NODE_SECRET in the
+  // environment when launching gep-mcp-server. With only an API key, the
+  // Hub returns a misleading `node_dead: zero credits + prolonged
+  // inactivity` reject even on a healthy claimed node.
   async publishBundle(args) {
     const { gene, capsule, event, chainId, modelName } = args || {};
     const geneErrors = validateGene(gene);

@@ -12,11 +12,12 @@ function buildResponse({ ok = true, status = 200, body = {}, text = '' } = {}) {
   };
 }
 
-function buildRuntime({ fetchImpl, sleepImpl }) {
+function buildRuntime({ fetchImpl, sleepImpl, apiKey, nodeSecret }) {
   return new RemoteRuntime({
     hubUrl: 'https://hub.test',
     nodeId: 'node_test',
-    apiKey: 'test_key',
+    apiKey: apiKey === undefined ? 'test_key' : apiKey,
+    nodeSecret: nodeSecret ?? null,
     fetchImpl,
     sleepImpl: sleepImpl ?? (async () => {}),
   });
@@ -46,6 +47,45 @@ const validCapsule = {
   blast_radius: { files: 1, lines: 30 },
   env_fingerprint: { platform: 'linux', arch: 'x64' },
 };
+
+describe('bearer auth selection', () => {
+  it('throws when constructed without any bearer', () => {
+    expect(() => new RemoteRuntime({ hubUrl: 'https://hub.test', nodeId: 'n', apiKey: null, nodeSecret: null })).toThrow(/apiKey and\/or nodeSecret/);
+  });
+
+  it('uses node_secret on /a2a/publish when both are present', async () => {
+    let captured;
+    const fetchImpl = vi.fn(async (url, opts) => {
+      captured = opts.headers.Authorization;
+      return buildResponse({ ok: true, body: { ok: true } });
+    });
+    const runtime = buildRuntime({ fetchImpl, apiKey: 'api_x', nodeSecret: 'secret_y' });
+    await runtime.publishBundle({ gene: validGene, capsule: validCapsule });
+    expect(captured).toBe('Bearer secret_y');
+  });
+
+  it('uses api_key on /a2a/memory/recall (read-mostly endpoint)', async () => {
+    let captured;
+    const fetchImpl = vi.fn(async (url, opts) => {
+      captured = opts.headers.Authorization;
+      return buildResponse({ ok: true, body: { matches: [] } });
+    });
+    const runtime = buildRuntime({ fetchImpl, apiKey: 'api_x', nodeSecret: 'secret_y' });
+    await runtime.recall({ query: 'q' });
+    expect(captured).toBe('Bearer api_x');
+  });
+
+  it('falls back to api_key on publish if no node_secret given (legacy callers)', async () => {
+    let captured;
+    const fetchImpl = vi.fn(async (url, opts) => {
+      captured = opts.headers.Authorization;
+      return buildResponse({ ok: true, body: { ok: true } });
+    });
+    const runtime = buildRuntime({ fetchImpl, apiKey: 'api_x', nodeSecret: null });
+    await runtime.publishBundle({ gene: validGene, capsule: validCapsule });
+    expect(captured).toBe('Bearer api_x');
+  });
+});
 
 describe('publishBundle', () => {
   it('rejects payload with malformed Gene before hitting network', async () => {
