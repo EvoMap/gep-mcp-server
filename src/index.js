@@ -27,7 +27,7 @@ const runtime = IS_REMOTE
   : new GepRuntime({ assetsDir: ASSETS_DIR, memoryDir: MEMORY_DIR });
 
 const server = new Server(
-  { name: 'gep-mcp-server', version: '1.2.0' },
+  { name: 'gep-mcp-server', version: '1.3.0' },
   { capabilities: { tools: {}, resources: {} } }
 );
 
@@ -186,6 +186,93 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['query'],
       },
     },
+    {
+      name: 'gep_publish_bundle',
+      description: 'Publish a Gene + Capsule (and optional EvolutionEvent) bundle to the EvoMap Hub. The Hub deduplicates on content hash so repeated calls with identical assets are idempotent. Use this when local high-quality genes should become available to the community. Requires remote mode (EVOMAP_API_KEY).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          gene: { type: 'object', description: 'Gene asset (must include type="Gene", id, category, signals_match)' },
+          capsule: { type: 'object', description: 'Capsule asset (must include type="Capsule", id, trigger[], summary)' },
+          event: { type: 'object', description: 'Optional EvolutionEvent asset to attach' },
+          chainId: { type: 'string', description: 'Optional evolution chain id (groups related publishes)' },
+          modelName: { type: 'string', description: 'Optional model name to stamp on each asset' },
+        },
+        required: ['gene', 'capsule'],
+      },
+    },
+    {
+      name: 'gep_publish_skill',
+      description: 'Convert a Gene into SKILL.md format and publish it to the EvoMap Hub skill marketplace. On 409 (already published) the call automatically degrades to an iterative update. Use this when a gene is mature enough for other agents to install and run as a Cursor / Claude Code skill.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          gene: { type: 'object', description: 'Gene asset to convert' },
+          category: { type: 'string', description: 'Optional override for skill category' },
+          tags: { type: 'array', items: { type: 'string' }, description: 'Optional tag list (defaults to gene.signals_match, sanitized)' },
+          changelog: { type: 'string', description: 'Optional changelog message used only on update path' },
+        },
+        required: ['gene'],
+      },
+    },
+    {
+      name: 'gep_submit_validation_report',
+      description: 'Build and submit a ValidationReport to the Hub. Pass either a pre-built report object or raw commands+results to construct one. Reports are anchored to a published asset by asset_id (recommended) so reviewers can correlate outcomes with assets.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          report: { type: 'object', description: 'Pre-built ValidationReport object (mutually exclusive with commands+results)' },
+          commands: { type: 'array', items: { type: 'string' }, description: 'List of commands that were run, in order' },
+          results: { type: 'array', items: { type: 'object' }, description: 'List of {ok, stdout, stderr} objects matching commands order' },
+          geneId: { type: 'string', description: 'Local gene id this report validates' },
+          targetAssetId: { type: 'string', description: 'asset_id of the published asset this report validates' },
+          targetLocalId: { type: 'string', description: 'local id of the asset (alternative to targetAssetId)' },
+        },
+      },
+    },
+    {
+      name: 'gep_revoke',
+      description: 'Withdraw a previously published asset from the Hub. For skills, pass localId starting with "skill_" (routes to /a2a/skill/store/delete). For Gene/Capsule/EvolutionEvent, pass assetId (sha256 content hash, routes to /a2a/revoke).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          assetId: { type: 'string', description: 'The asset_id (sha256:...) to revoke (required for Gene/Capsule/Event)' },
+          localId: { type: 'string', description: 'Local id; required for skills (must start with "skill_")' },
+          reason: { type: 'string', description: 'Free-form reason recorded in the audit log' },
+        },
+      },
+    },
+    {
+      name: 'gep_identity',
+      description: 'Fetch the portable identity profile of a node (DID document, capabilities, registered services). Defaults to the current node. Optionally also returns a verifiable reputation attestation.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          nodeId: { type: 'string', description: 'Target node id (defaults to the current node)' },
+          includeAttestation: { type: 'boolean', description: 'If true, also fetch the reputation attestation' },
+        },
+      },
+    },
+    {
+      name: 'gep_audit',
+      description: 'Read recent audit log entries for a node (publishes, transfers, reputation events). Defaults to the current node and requires sender_id authorization (handled automatically).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          nodeId: { type: 'string', description: 'Target node id (defaults to the current node)' },
+          limit: { type: 'number', description: 'Max rows to return (default 50, max 200)' },
+          offset: { type: 'number', description: 'Pagination offset (default 0)' },
+          action: { type: 'string', description: 'Optional action-type filter' },
+          since: { type: 'string', description: 'Optional ISO-8601 lower bound on timestamp' },
+          until: { type: 'string', description: 'Optional ISO-8601 upper bound on timestamp' },
+        },
+      },
+    },
+    {
+      name: 'gep_protocol_info',
+      description: 'Return the GEP schema and protocol versions this MCP build speaks. Use to detect protocol drift between MCP and Hub or between MCP and the parent agent.',
+      inputSchema: { type: 'object', properties: {} },
+    },
   ],
 }));
 
@@ -232,6 +319,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const data = await res.json();
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       }
+      case 'gep_publish_bundle':
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.publishBundle(args), null, 2) }] };
+      case 'gep_publish_skill':
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.publishSkill(args), null, 2) }] };
+      case 'gep_submit_validation_report':
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.submitValidationReport(args), null, 2) }] };
+      case 'gep_revoke':
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.revoke(args), null, 2) }] };
+      case 'gep_identity':
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.getIdentity(args), null, 2) }] };
+      case 'gep_audit':
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.getAuditLogs(args), null, 2) }] };
+      case 'gep_protocol_info':
+        return { content: [{ type: 'text', text: JSON.stringify(runtime.getProtocolInfo(), null, 2) }] };
       default:
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     }

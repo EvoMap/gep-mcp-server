@@ -2,8 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, renameSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import {
+  SCHEMA_VERSION,
+  buildValidationReport as protoBuildValidationReport,
+  geneToSkillMd as protoGeneToSkillMd,
+  validateGene,
+  validateCapsule,
+} from './protocol.js';
 
-const SCHEMA_VERSION = '1.5.0';
+export { SCHEMA_VERSION };
 
 export class GepRuntime {
   constructor({ assetsDir, memoryDir }) {
@@ -235,6 +242,73 @@ export class GepRuntime {
     rmSync(tmpDir, { recursive: true, force: true });
 
     return { ok: true, outputPath, manifest };
+  }
+
+  // Local-mode equivalents of remote publish endpoints. They do not actually
+  // hit the Hub (no API key), but they do exercise the same validation and
+  // canonicalization paths so callers can rehearse a publish offline before
+  // switching to remote mode. Returns shape mirrors RemoteRuntime so the
+  // tool wiring in index.js can stay branch-free.
+  publishBundle(args) {
+    const { gene, capsule, event } = args || {};
+    const errors = [...validateGene(gene), ...validateCapsule(capsule)];
+    if (errors.length > 0) {
+      return { ok: false, error: 'validation_failed', issues: errors };
+    }
+    return {
+      ok: false,
+      error: 'remote_required',
+      hint: 'gep_publish_bundle requires remote mode (set EVOMAP_API_KEY + EVOMAP_NODE_ID). The bundle validated locally but was not transmitted.',
+      validated: true,
+      gene_id: gene.id,
+      capsule_id: capsule.id,
+      event_id: event?.id || null,
+    };
+  }
+
+  publishSkill(args) {
+    const { gene } = args || {};
+    const errors = validateGene(gene);
+    if (errors.length > 0) return { ok: false, error: 'validation_failed', issues: errors };
+    const md = protoGeneToSkillMd(gene);
+    return {
+      ok: false,
+      error: 'remote_required',
+      hint: 'gep_publish_skill requires remote mode. Preview SKILL.md returned for review.',
+      preview: md.slice(0, 1500),
+    };
+  }
+
+  submitValidationReport(args) {
+    const { commands, results, geneId } = args || {};
+    const report = protoBuildValidationReport({ geneId, commands, results });
+    return {
+      ok: false,
+      error: 'remote_required',
+      hint: 'gep_submit_validation_report requires remote mode to upload. Local report generated below for inspection.',
+      report,
+    };
+  }
+
+  revoke() {
+    return { ok: false, error: 'remote_required', hint: 'gep_revoke requires remote mode (Hub-side state).' };
+  }
+
+  getIdentity() {
+    return { ok: false, error: 'remote_required', hint: 'gep_identity requires remote mode.' };
+  }
+
+  getAuditLogs() {
+    return { ok: false, error: 'remote_required', hint: 'gep_audit requires remote mode.' };
+  }
+
+  getProtocolInfo() {
+    return {
+      schema_version: SCHEMA_VERSION,
+      mode: 'local',
+      assets_dir: this.assetsDir,
+      memory_dir: this.memoryDir,
+    };
   }
 
   getStatus() {
