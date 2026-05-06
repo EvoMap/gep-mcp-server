@@ -8,7 +8,8 @@
     "gep-mcp-server": "./src/index.js"
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm test"
   },
   "keywords": [
     "gep",
