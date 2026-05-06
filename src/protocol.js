@@ -61,16 +61,46 @@ export function generateMessageId() {
   return 'msg_' + Date.now() + '_' + Math.random().toString(16).slice(2, 10);
 }
 
+// Capsule.outcome accepts only a tiny whitelist of fields when the Hub
+// recomputes asset_id during /a2a/publish. Free-form fields like `notes` or
+// `details` ride along on the wire fine, but the Hub strips them before
+// hashing, so MCP-side stamps that include them break asset_id verification
+// (`capsule_asset_id_verification_failed`). Mirror Hub behaviour: keep only
+// status + score in the outcome subobject before stamping.
+const CAPSULE_OUTCOME_WIRE_FIELDS = new Set(['status', 'score']);
+
+function stripCapsuleOutcomeWire(asset) {
+  if (!asset || asset.type !== 'Capsule') return;
+  const outcome = asset.outcome;
+  if (!outcome || typeof outcome !== 'object') return;
+  for (const k of Object.keys(outcome)) {
+    if (!CAPSULE_OUTCOME_WIRE_FIELDS.has(k)) delete outcome[k];
+  }
+}
+
 // Attach asset_id and schema_version to an asset object in place.
 // Returns the same object for chaining.
+//
+// For Capsules, this also normalizes the `outcome` subobject to the
+// Hub-accepted whitelist (status, score). This avoids
+// `capsule_asset_id_verification_failed` errors on the Hub when callers
+// attach extra fields like `outcome.notes`. If you want a richer narrative,
+// put it in `summary` (where it actually feeds the recall index anyway).
 export function stampAsset(asset) {
   if (!asset || typeof asset !== 'object') return asset;
   if (!asset.schema_version) asset.schema_version = SCHEMA_VERSION;
+  stripCapsuleOutcomeWire(asset);
   // Always recompute asset_id on stamp so callers can mutate fields after
   // building and we still ship the right hash on the wire.
   asset.asset_id = computeAssetId(asset);
   return asset;
 }
+
+// Hub-side gate constants. Mirror evolver-private-dev/src/gep/publishGate.js;
+// changing these here without a matching Hub deployment will surface as
+// post-validation rejects on /a2a/publish.
+const GENE_MIN_STRATEGY_STEPS = 2;
+const GENE_MIN_STRATEGY_STEP_LEN = 15;
 
 // Validate a Gene asset has the minimum required shape for /a2a/publish.
 export function validateGene(gene) {
@@ -86,7 +116,25 @@ export function validateGene(gene) {
   if (!Array.isArray(gene.signals_match) || gene.signals_match.length === 0) {
     errors.push('gene.signals_match must be a non-empty array');
   }
+  if (!Array.isArray(gene.strategy) || gene.strategy.length < GENE_MIN_STRATEGY_STEPS) {
+    errors.push(`gene.strategy must be an array with at least ${GENE_MIN_STRATEGY_STEPS} actionable steps`);
+  } else if (gene.strategy.some((s) => typeof s !== 'string' || s.trim().length < GENE_MIN_STRATEGY_STEP_LEN)) {
+    errors.push(
+      `gene.strategy: each step must be a string of at least ${GENE_MIN_STRATEGY_STEP_LEN} characters describing an actionable operation`,
+    );
+  }
+  if (!Array.isArray(gene.validation) || gene.validation.length === 0) {
+    errors.push(
+      'gene.validation must be a non-empty array of self-contained sandbox commands. Hub-runnable examples: `node -e "require(\\\'assert\\\').strictEqual(typeof process.version,\\\'string\\\')"`. Avoid commands that require a project package.json or local files.',
+    );
+  } else if (gene.validation.some((c) => typeof c !== 'string' || c.trim().length === 0)) {
+    errors.push('gene.validation: each command must be a non-empty string');
+  }
   return errors;
+}
+
+function isFiniteNumber(n) {
+  return typeof n === 'number' && Number.isFinite(n);
 }
 
 export function validateCapsule(capsule) {
@@ -100,10 +148,49 @@ export function validateCapsule(capsule) {
   if (typeof capsule.summary !== 'string' || capsule.summary.trim().length < 10) {
     errors.push('capsule.summary must be a descriptive string (>= 10 chars)');
   }
-  if (capsule.outcome && typeof capsule.outcome === 'object') {
-    if (capsule.outcome.status && !['success', 'failed'].includes(capsule.outcome.status)) {
-      errors.push('capsule.outcome.status must be success|failed');
+  if (!isFiniteNumber(capsule.confidence) || capsule.confidence < 0 || capsule.confidence > 1) {
+    errors.push('capsule.confidence must be a number in [0, 1]');
+  }
+  if (!capsule.blast_radius || typeof capsule.blast_radius !== 'object') {
+    errors.push('capsule.blast_radius must be an object with numeric files+lines');
+  } else {
+    if (!isFiniteNumber(capsule.blast_radius.files) || capsule.blast_radius.files < 0) {
+      errors.push('capsule.blast_radius.files must be a non-negative number');
     }
+    if (!isFiniteNumber(capsule.blast_radius.lines) || capsule.blast_radius.lines < 0) {
+      errors.push('capsule.blast_radius.lines must be a non-negative number');
+    }
+  }
+  if (!capsule.env_fingerprint || typeof capsule.env_fingerprint !== 'object') {
+    errors.push('capsule.env_fingerprint must be an object with platform+arch strings');
+  } else {
+    if (typeof capsule.env_fingerprint.platform !== 'string' || capsule.env_fingerprint.platform.length === 0) {
+      errors.push('capsule.env_fingerprint.platform must be a non-empty string');
+    }
+    if (typeof capsule.env_fingerprint.arch !== 'string' || capsule.env_fingerprint.arch.length === 0) {
+      errors.push('capsule.env_fingerprint.arch must be a non-empty string');
+    }
+  }
+  if (!capsule.outcome || typeof capsule.outcome !== 'object') {
+    errors.push('capsule.outcome must be an object with at least { status: "success"|"failed" }');
+  } else {
+    if (!capsule.outcome.status || !['success', 'failed'].includes(capsule.outcome.status)) {
+      errors.push('capsule.outcome.status must be "success" or "failed"');
+    }
+    if (capsule.outcome.score !== undefined && (!isFiniteNumber(capsule.outcome.score) || capsule.outcome.score < 0 || capsule.outcome.score > 1)) {
+      errors.push('capsule.outcome.score, when present, must be a number in [0, 1]');
+    }
+  }
+  // Substance gate: the Hub rejects capsules that have only metadata. At
+  // least one of content (>=50 chars), strategy (>=1 step), code_snippet
+  // (>=50 chars), or diff (>=50 chars) must be present so a future reader
+  // can act on the capsule.
+  const hasContent = typeof capsule.content === 'string' && capsule.content.length >= 50;
+  const hasStrategy = Array.isArray(capsule.strategy) && capsule.strategy.length > 0;
+  const hasCode = typeof capsule.code_snippet === 'string' && capsule.code_snippet.length >= 50;
+  const hasDiff = typeof capsule.diff === 'string' && capsule.diff.length >= 50;
+  if (!hasContent && !hasStrategy && !hasCode && !hasDiff) {
+    errors.push('capsule must include at least one of content (>=50 chars), strategy (>=1 step), code_snippet (>=50 chars), or diff (>=50 chars)');
   }
   return errors;
 }
