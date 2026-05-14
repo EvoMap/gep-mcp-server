@@ -87,7 +87,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'gep_recall',
-      description: 'Query the evolution memory graph for relevant past experience. Returns historical signal-gene-outcome mappings that match the query. Use this to check if you have dealt with a similar situation before.',
+      description: 'Query the evolution memory graph for relevant past experience. Returns historical signal-gene-outcome mappings that match the query. Use this to check if you have dealt with a similar situation before. Schema 1.7.0 adds optional budget hints (budget_tokens / budget_usd / cost_tier) so callers can drop expensive matches at filter time; matches that exceed the budget are still returned (top 1-2) but flagged with `over_budget: true` so the caller can decide.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -107,12 +107,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           max_cost_tokens: {
             type: 'number',
             minimum: 0,
-            description: 'Optional: drop matches whose capsule reports cost_tokens above this threshold. Matches without recorded cost are kept (treated as unknown, not unbounded).',
+            description: 'Optional: client-side post-filter — drop matches whose capsule reports cost_tokens above this threshold. Matches without recorded cost are kept (treated as unknown, not unbounded).',
           },
           max_cost_usd: {
             type: 'number',
             minimum: 0,
-            description: 'Optional: drop matches whose capsule reports cost_usd above this threshold. Matches without recorded cost are kept (treated as unknown, not unbounded).',
+            description: 'Optional: client-side post-filter — drop matches whose capsule reports cost_usd above this threshold. Matches without recorded cost are kept (treated as unknown, not unbounded).',
+          },
+          budget_tokens: {
+            type: 'integer',
+            minimum: 0,
+            description: 'Optional (schema 1.7.0): forwarded to Hub as a ranking hint so expensive matches can be down-ranked or dropped server-side. Capsules without cost_tokens metadata survive filtering (treated as cost=unknown).',
+          },
+          budget_usd: {
+            type: 'number',
+            minimum: 0,
+            description: 'Optional (schema 1.7.0): forwarded to Hub as a ranking hint. Capsules without cost_usd metadata survive filtering (treated as cost=unknown).',
+          },
+          cost_tier: {
+            type: 'string',
+            enum: ['low', 'medium', 'high'],
+            description: 'Optional (schema 1.7.0): qualitative budget tier. low=<5000 tokens / <$0.05; medium=<50000 / <$0.50; high=no cap. Applied only if budget_tokens / budget_usd are not given explicitly.',
           },
         },
         required: ['query'],
@@ -120,7 +135,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'gep_record_outcome',
-      description: 'Record the outcome of a task. Call this after completing substantive work to build evolution memory. The summary must describe both the problem and the solution.',
+      description: 'Record the outcome of a task. Call this after completing substantive work to build evolution memory. The summary must describe both the problem and the solution. Schema 1.7.0 adds optional `cost_tokens` / `cost_usd` hints so future budget-aware recall can rank by cost; both default to null and never block the record.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -145,6 +160,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           summary: {
             type: 'string',
             description: 'Specific description of what happened: "Fixed X by doing Y" (required for useful recall)',
+          },
+          cost_tokens: {
+            type: 'integer',
+            minimum: 0,
+            description: 'Optional (schema 1.7.0): approximate total tokens this task burned. Recommended for substantive tasks so a future budget-aware recall can rank by cost. Omit / null when unknown.',
+          },
+          cost_usd: {
+            type: 'number',
+            minimum: 0,
+            description: 'Optional (schema 1.7.0): approximate USD cost this task burned. Same purpose as cost_tokens but for dollar-budget callers. Omit / null when unknown.',
           },
         },
         required: ['geneId', 'signals', 'status', 'score', 'summary'],
