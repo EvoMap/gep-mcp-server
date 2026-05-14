@@ -219,27 +219,47 @@ export class RemoteRuntime {
   }
 
   async recall(args) {
-    const { query, signals, limit, max_cost_tokens, max_cost_usd } = args || {};
+    const {
+      query, signals, limit,
+      max_cost_tokens, max_cost_usd,
+      budget_tokens, budget_usd, cost_tier,
+    } = args || {};
     const effectiveLimit = Math.min(Math.max(1, parseInt(limit, 10) || 10), 50);
-    const response = await this._request('POST', '/a2a/memory/recall', {
+    // Schema 1.7.0: forward budget hints to the Hub so it can down-rank
+    // expensive matches server-side. Older Hubs ignore unknown JSON
+    // fields, so this is forward-compatible. We then run the client-side
+    // post-filter (`applyCostThresholds`) on whatever the Hub returns —
+    // the two are complementary: budget_* is a ranking hint, max_cost_*
+    // is a hard drop.
+    const body = {
       node_id: this.nodeId,
       query,
       signals,
       limit: effectiveLimit,
-    });
+    };
+    if (budget_tokens !== undefined && budget_tokens !== null) body.budget_tokens = budget_tokens;
+    if (budget_usd !== undefined && budget_usd !== null) body.budget_usd = budget_usd;
+    if (cost_tier !== undefined && cost_tier !== null) body.cost_tier = cost_tier;
+    const response = await this._request('POST', '/a2a/memory/recall', body);
     return applyCostThresholds(response, { max_cost_tokens, max_cost_usd });
   }
 
   async recordOutcome(args) {
-    const { geneId, signals, status, score, summary } = args || {};
-    return this._request('POST', '/a2a/memory/record', {
+    const { geneId, signals, status, score, summary, cost_tokens, cost_usd } = args || {};
+    // Schema 1.7.0: forward cost hints to the Hub. Older Hubs ignore
+    // unknown fields; newer Hubs persist them onto the capsule so a
+    // future budget-aware recall can rank by cost.
+    const body = {
       node_id: this.nodeId,
       signals,
       gene_id: geneId,
       status,
       score,
       summary,
-    });
+    };
+    if (cost_tokens !== undefined && cost_tokens !== null) body.cost_tokens = cost_tokens;
+    if (cost_usd !== undefined && cost_usd !== null) body.cost_usd = cost_usd;
+    return this._request('POST', '/a2a/memory/record', body);
   }
 
   async getStatus() {
