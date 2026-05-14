@@ -130,6 +130,20 @@ describe('validation', () => {
     expect(validateCapsule(meta).some((e) => /content.*strategy.*code_snippet.*diff/.test(e))).toBe(true);
   });
 
+  // Schema 1.7.0: optional cost hint validation.
+  it('accepts Capsule with valid cost_tokens / cost_usd', () => {
+    expect(validateCapsule({ ...validCapsule, cost_tokens: 0, cost_usd: 0 })).toEqual([]);
+    expect(validateCapsule({ ...validCapsule, cost_tokens: 12345, cost_usd: 0.42 })).toEqual([]);
+    expect(validateCapsule({ ...validCapsule, cost_tokens: null, cost_usd: null })).toEqual([]);
+  });
+
+  it('rejects Capsule with malformed cost_tokens / cost_usd', () => {
+    expect(validateCapsule({ ...validCapsule, cost_tokens: -1 }).some((e) => /cost_tokens/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, cost_tokens: 1.5 }).some((e) => /cost_tokens/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, cost_usd: -0.01 }).some((e) => /cost_usd/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, cost_usd: 'cheap' }).some((e) => /cost_usd/.test(e))).toBe(true);
+  });
+
   it('accepts well-formed Capsule', () => {
     expect(validateCapsule(validCapsule)).toEqual([]);
   });

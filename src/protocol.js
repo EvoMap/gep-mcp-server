@@ -161,6 +161,20 @@ export function validateCapsule(capsule) {
       errors.push('capsule.outcome.score, when present, must be a number in [0, 1]');
     }
   }
+  // Schema 1.7.0: optional cost hints. Both fields are nullable so a
+  // recorder that does not have a cost estimate can explicitly say
+  // "unknown" instead of omitting the field. `cost_tokens` is an
+  // integer count (>= 0); `cost_usd` is a non-negative finite number.
+  if (capsule.cost_tokens !== undefined && capsule.cost_tokens !== null) {
+    if (!isFiniteNumber(capsule.cost_tokens) || capsule.cost_tokens < 0 || !Number.isInteger(capsule.cost_tokens)) {
+      errors.push('capsule.cost_tokens, when present, must be a non-negative integer or null');
+    }
+  }
+  if (capsule.cost_usd !== undefined && capsule.cost_usd !== null) {
+    if (!isFiniteNumber(capsule.cost_usd) || capsule.cost_usd < 0) {
+      errors.push('capsule.cost_usd, when present, must be a non-negative number or null');
+    }
+  }
   // Substance gate: the Hub rejects capsules that have only metadata. At
   // least one of content (>=50 chars), strategy (>=1 step), code_snippet
   // (>=50 chars), or diff (>=50 chars) must be present so a future reader
