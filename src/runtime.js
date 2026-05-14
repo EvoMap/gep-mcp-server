@@ -105,10 +105,12 @@ export class GepRuntime {
   }
 
   recall(args) {
-    const { query, signals } = args || {};
+    const { query, signals, limit, budget_tokens, budget_usd, cost_tier } = args || {};
     const events = this._readGraphEvents(500);
     const querySignals = signals || this._extractSignals(query);
     const queryKey = this._computeSignalKey(querySignals);
+    const effectiveLimit = Math.min(Math.max(1, parseInt(limit, 10) || 10), 50);
+    const budget = resolveBudgetCaps({ budget_tokens, budget_usd, cost_tier });
 
     const outcomes = events.filter(e => e.kind === 'outcome');
     const relevant = [];
@@ -118,6 +120,12 @@ export class GepRuntime {
       const evSignals = ev.signal?.signals || [];
       const sim = this._jaccard(querySignals, evSignals);
       if (sim >= 0.2 || evKey === queryKey) {
+        // Schema 1.7.0: forward optional cost hints from the recorded
+        // outcome so the budget filter can score them. Memory-graph
+        // events written before 1.7.0 will not have these.
+        const costTokens = isFiniteInt(ev.outcome?.cost_tokens) ? ev.outcome.cost_tokens : null;
+        const costUsd = isFiniteNumber(ev.outcome?.cost_usd) ? ev.outcome.cost_usd : null;
+        const overBudget = isOverBudget(budget, costTokens, costUsd);
         relevant.push({
           signal_key: evKey,
           gene_id: ev.gene?.id,
@@ -125,23 +133,43 @@ export class GepRuntime {
           outcome: ev.outcome,
           similarity: Math.round(sim * 100) / 100,
           timestamp: ev.ts,
+          cost_tokens: costTokens,
+          cost_usd: costUsd,
+          over_budget: overBudget,
         });
       }
     }
 
     relevant.sort((a, b) => b.similarity - a.similarity);
 
+    // Budget-aware truncation: prefer in-budget matches first, then
+    // backfill up to `effectiveLimit` with the top 1-2 over-budget
+    // matches so the caller can still see them and decide. Capsules
+    // with unknown cost (cost_tokens == null && cost_usd == null) are
+    // treated as in-budget per the conservative fallback documented
+    // on SCHEMA_VERSION 1.7.0.
+    const matches = budget.active
+      ? selectWithinBudget(relevant, effectiveLimit, /* overBudgetSlack */ 2)
+      : relevant.slice(0, effectiveLimit);
+
     return {
       query,
       signals_extracted: querySignals,
-      matches: relevant.slice(0, 10),
+      matches,
       total_memory_events: events.length,
+      budget_applied: budget.active ? serializeBudgetApplied(budget) : null,
     };
   }
 
   recordOutcome(args) {
-    const { geneId, signals, status, score, summary } = args || {};
+    const { geneId, signals, status, score, summary, cost_tokens, cost_usd } = args || {};
     const signalKey = this._computeSignalKey(signals);
+    // Schema 1.7.0: persist cost hints onto the outcome so a future
+    // budget-aware recall can rank by cost. Both fields are
+    // explicitly nullable -- recorders without an estimate should
+    // leave them null rather than guessing.
+    const costTokens = isFiniteInt(cost_tokens) && cost_tokens >= 0 ? cost_tokens : null;
+    const costUsd = isFiniteNumber(cost_usd) && cost_usd >= 0 ? cost_usd : null;
     const ev = {
       type: 'MemoryGraphEvent',
       kind: 'outcome',
@@ -149,7 +177,13 @@ export class GepRuntime {
       ts: new Date().toISOString(),
       signal: { key: signalKey, signals },
       gene: { id: geneId },
-      outcome: { status, score: clamp01(score), note: summary || null },
+      outcome: {
+        status,
+        score: clamp01(score),
+        note: summary || null,
+        cost_tokens: costTokens,
+        cost_usd: costUsd,
+      },
     };
     this._appendToGraph(ev);
 
@@ -165,6 +199,8 @@ export class GepRuntime {
         blast_radius: { files: 0, lines: 0 },
         outcome: { status, score: clamp01(score) },
         success_streak: 1,
+        cost_tokens: costTokens,
+        cost_usd: costUsd,
       };
       capsule.asset_id = this._computeAssetId(capsule);
       this.store.upsertCapsule(capsule);
@@ -623,4 +659,101 @@ function writeJsonAtomic(filePath, obj) {
 function clamp01(x) {
   const n = Number(x);
   return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
+}
+
+// ----------------------------------------------------------------------------
+// Schema 1.7.0: recall budget helpers (Meta-Harness PoC task D).
+//
+// `resolveBudgetCaps` collapses the optional `budget_tokens`,
+// `budget_usd`, and `cost_tier` recall args into a single numeric
+// pair `{tokens, usd}` plus an `active` flag. Explicit numeric caps
+// win over `cost_tier`; if nothing is given, recall stays in its
+// pre-1.7.0 behaviour (no budget filtering at all).
+//
+// `isOverBudget` returns true only when *some* cost field is known
+// AND that field exceeds the corresponding cap. Capsules with
+// `cost_tokens == null && cost_usd == null` are treated as in-budget
+// per the conservative-fallback contract documented on
+// SCHEMA_VERSION (1.7.0) -- never silently drop a recall hit just
+// because its cost metadata pre-dates this version.
+// ----------------------------------------------------------------------------
+
+const COST_TIER_CAPS = {
+  low: { tokens: 5_000, usd: 0.05 },
+  medium: { tokens: 50_000, usd: 0.5 },
+  high: { tokens: Number.POSITIVE_INFINITY, usd: Number.POSITIVE_INFINITY },
+};
+
+function isFiniteNumber(n) {
+  return typeof n === 'number' && Number.isFinite(n);
+}
+
+function isFiniteInt(n) {
+  return isFiniteNumber(n) && Number.isInteger(n);
+}
+
+export function resolveBudgetCaps({ budget_tokens, budget_usd, cost_tier } = {}) {
+  const tokensExplicit = isFiniteInt(budget_tokens) && budget_tokens >= 0 ? budget_tokens : null;
+  const usdExplicit = isFiniteNumber(budget_usd) && budget_usd >= 0 ? budget_usd : null;
+  const tier = COST_TIER_CAPS[cost_tier] || null;
+  if (tokensExplicit !== null || usdExplicit !== null) {
+    return {
+      active: true,
+      tokens: tokensExplicit !== null ? tokensExplicit : Number.POSITIVE_INFINITY,
+      usd: usdExplicit !== null ? usdExplicit : Number.POSITIVE_INFINITY,
+      tier: null,
+    };
+  }
+  if (tier) {
+    return { active: true, tokens: tier.tokens, usd: tier.usd, tier: cost_tier };
+  }
+  return { active: false, tokens: Number.POSITIVE_INFINITY, usd: Number.POSITIVE_INFINITY, tier: null };
+}
+
+// JSON-safe projection of an active budget for the recall response.
+// `Number.POSITIVE_INFINITY` is preserved internally for cheap arithmetic
+// (`x > Infinity === false`) but `JSON.stringify` silently turns Infinity
+// into `null`, which is indistinguishable from "caller passed nothing"
+// for the receiving agent. Map uncapped dimensions to `null` AND surface
+// explicit `tokens_unbounded` / `usd_unbounded` flags + the originating
+// `cost_tier` so the caller can disambiguate.
+export function serializeBudgetApplied(budget) {
+  if (!budget || !budget.active) return null;
+  const tokensFinite = Number.isFinite(budget.tokens);
+  const usdFinite = Number.isFinite(budget.usd);
+  return {
+    budget_tokens: tokensFinite ? budget.tokens : null,
+    budget_usd: usdFinite ? budget.usd : null,
+    tokens_unbounded: !tokensFinite,
+    usd_unbounded: !usdFinite,
+    cost_tier: budget.tier || null,
+  };
+}
+
+export function isOverBudget(budget, costTokens, costUsd) {
+  if (!budget || !budget.active) return false;
+  if (isFiniteInt(costTokens) && costTokens > budget.tokens) return true;
+  if (isFiniteNumber(costUsd) && costUsd > budget.usd) return true;
+  return false;
+}
+
+// Truncate matches to `limit` while keeping at most `overBudgetSlack`
+// over-budget entries at the tail so the caller can still see the
+// best expensive candidates. `relevant` MUST already be sorted by
+// similarity desc.
+export function selectWithinBudget(relevant, limit, overBudgetSlack) {
+  const inBudget = [];
+  const over = [];
+  for (const m of relevant) {
+    if (m.over_budget) over.push(m);
+    else inBudget.push(m);
+  }
+  const slack = Math.max(0, overBudgetSlack | 0);
+  const out = inBudget.slice(0, limit);
+  for (const m of over) {
+    if (out.length >= limit) break;
+    if (out.filter((x) => x.over_budget).length >= slack) break;
+    out.push(m);
+  }
+  return out;
 }
