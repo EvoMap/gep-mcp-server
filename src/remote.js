@@ -152,26 +152,42 @@ export class RemoteRuntime {
   }
 
   async recall(args) {
-    const { query, signals, limit } = args || {};
+    const { query, signals, limit, budget_tokens, budget_usd, cost_tier } = args || {};
     const effectiveLimit = Math.min(Math.max(1, parseInt(limit, 10) || 10), 50);
-    return this._request('POST', '/a2a/memory/recall', {
+    // Schema 1.7.0: forward budget hints to the Hub. Older Hubs
+    // ignore unknown JSON fields, so this is forward-compatible.
+    // The local-mode post-filter (`selectWithinBudget` in runtime.js)
+    // is intentionally NOT applied here: if Hub returns matches that
+    // already include cost metadata we trust its ranking; otherwise
+    // the caller still gets the un-filtered list and can decide.
+    const body = {
       node_id: this.nodeId,
       query,
       signals,
       limit: effectiveLimit,
-    });
+    };
+    if (budget_tokens !== undefined && budget_tokens !== null) body.budget_tokens = budget_tokens;
+    if (budget_usd !== undefined && budget_usd !== null) body.budget_usd = budget_usd;
+    if (cost_tier !== undefined && cost_tier !== null) body.cost_tier = cost_tier;
+    return this._request('POST', '/a2a/memory/recall', body);
   }
 
   async recordOutcome(args) {
-    const { geneId, signals, status, score, summary } = args || {};
-    return this._request('POST', '/a2a/memory/record', {
+    const { geneId, signals, status, score, summary, cost_tokens, cost_usd } = args || {};
+    // Schema 1.7.0: forward cost hints to the Hub. Older Hubs ignore
+    // unknown fields; newer Hubs persist them onto the capsule so a
+    // future budget-aware recall can rank by cost.
+    const body = {
       node_id: this.nodeId,
       signals,
       gene_id: geneId,
       status,
       score,
       summary,
-    });
+    };
+    if (cost_tokens !== undefined && cost_tokens !== null) body.cost_tokens = cost_tokens;
+    if (cost_usd !== undefined && cost_usd !== null) body.cost_usd = cost_usd;
+    return this._request('POST', '/a2a/memory/record', body);
   }
 
   async getStatus() {
