@@ -12,7 +12,15 @@ import { createHash } from 'node:crypto';
 
 // Bump MINOR for additive fields; MAJOR for breaking changes.
 // Mirrors evolver-private-dev/src/gep/contentHash.js.
-export const SCHEMA_VERSION = '1.6.0';
+//
+// 1.7.0 (Meta-Harness PoC task D): Capsule gains optional
+// `cost_tokens: int | null` and `cost_usd: float | null` fields.
+// Both are advisory hints to the recall ranker so a budget-aware
+// caller can drop expensive matches at filter time. Old capsules
+// without these fields are treated as `cost=unknown` and survive
+// budget filtering as a conservative fallback (never silently
+// excluded).
+export const SCHEMA_VERSION = '1.7.0';
 export const PROTOCOL_NAME = 'gep-a2a';
 export const PROTOCOL_VERSION = '1.0.0';
 
@@ -179,6 +187,20 @@ export function validateCapsule(capsule) {
     }
     if (capsule.outcome.score !== undefined && (!isFiniteNumber(capsule.outcome.score) || capsule.outcome.score < 0 || capsule.outcome.score > 1)) {
       errors.push('capsule.outcome.score, when present, must be a number in [0, 1]');
+    }
+  }
+  // Schema 1.7.0: optional cost hints. Both fields are nullable so a
+  // recorder that does not have a cost estimate can explicitly say
+  // "unknown" instead of omitting the field. `cost_tokens` is an
+  // integer count (>= 0); `cost_usd` is a non-negative finite number.
+  if (capsule.cost_tokens !== undefined && capsule.cost_tokens !== null) {
+    if (!isFiniteNumber(capsule.cost_tokens) || capsule.cost_tokens < 0 || !Number.isInteger(capsule.cost_tokens)) {
+      errors.push('capsule.cost_tokens, when present, must be a non-negative integer or null');
+    }
+  }
+  if (capsule.cost_usd !== undefined && capsule.cost_usd !== null) {
+    if (!isFiniteNumber(capsule.cost_usd) || capsule.cost_usd < 0) {
+      errors.push('capsule.cost_usd, when present, must be a non-negative number or null');
     }
   }
   // Substance gate: the Hub rejects capsules that have only metadata. At

@@ -22,7 +22,7 @@ describe('protocol primitives', () => {
     // Bump these together with evolver-private-dev/src/gep/contentHash.js
     // and a2aProtocol.js. If the Hub is on a newer version this assertion
     // is the canary.
-    expect(SCHEMA_VERSION).toBe('1.6.0');
+    expect(SCHEMA_VERSION).toBe('1.7.0');
     expect(PROTOCOL_NAME).toBe('gep-a2a');
     expect(PROTOCOL_VERSION).toBe('1.0.0');
   });
@@ -45,7 +45,7 @@ describe('protocol primitives', () => {
   it('stampAsset adds asset_id and schema_version idempotently', () => {
     const g = { type: 'Gene', id: 'g1' };
     stampAsset(g);
-    expect(g.schema_version).toBe('1.6.0');
+    expect(g.schema_version).toBe('1.7.0');
     expect(g.asset_id).toMatch(/^sha256:/);
     const previousId = g.asset_id;
     // Stamping again with same content yields same id
@@ -130,6 +130,20 @@ describe('validation', () => {
     expect(validateCapsule(meta).some((e) => /content.*strategy.*code_snippet.*diff/.test(e))).toBe(true);
   });
 
+  // Schema 1.7.0: optional cost hint validation.
+  it('accepts Capsule with valid cost_tokens / cost_usd', () => {
+    expect(validateCapsule({ ...validCapsule, cost_tokens: 0, cost_usd: 0 })).toEqual([]);
+    expect(validateCapsule({ ...validCapsule, cost_tokens: 12345, cost_usd: 0.42 })).toEqual([]);
+    expect(validateCapsule({ ...validCapsule, cost_tokens: null, cost_usd: null })).toEqual([]);
+  });
+
+  it('rejects Capsule with malformed cost_tokens / cost_usd', () => {
+    expect(validateCapsule({ ...validCapsule, cost_tokens: -1 }).some((e) => /cost_tokens/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, cost_tokens: 1.5 }).some((e) => /cost_tokens/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, cost_usd: -0.01 }).some((e) => /cost_usd/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, cost_usd: 'cheap' }).some((e) => /cost_usd/.test(e))).toBe(true);
+  });
+
   it('accepts well-formed Capsule', () => {
     expect(validateCapsule(validCapsule)).toEqual([]);
   });
@@ -201,7 +215,7 @@ describe('buildValidationReport', () => {
     expect(r.commands).toHaveLength(2);
     expect(r.commands[1].stderr).toBe('lint failed');
     expect(r.asset_id).toMatch(/^sha256:/);
-    expect(r.schema_version).toBe('1.6.0');
+    expect(r.schema_version).toBe('1.7.0');
   });
 
   it('falls back to commands derived from results when commands omitted', () => {
@@ -272,7 +286,7 @@ describe('skill md conversion', () => {
     expect(md).toContain('- `log_error`');
     expect(md).toContain('## Strategy');
     expect(md).toContain('## Validation');
-    expect(md).toContain('Schema version: `1.6.0`');
+    expect(md).toContain('Schema version: `1.7.0`');
   });
 
   it('sanitizeTags drops short / pure-numeric / timestamp-bearing entries', () => {
