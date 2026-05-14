@@ -7,7 +7,13 @@ import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GepRuntime, resolveBudgetCaps, selectWithinBudget, isOverBudget } from '../runtime.js';
+import {
+  GepRuntime,
+  resolveBudgetCaps,
+  selectWithinBudget,
+  isOverBudget,
+  serializeBudgetApplied,
+} from '../runtime.js';
 
 let runtime;
 let tmp;
@@ -191,7 +197,96 @@ describe('GepRuntime.recall budget integration', () => {
       signals: ['log_error', 'timeout'],
       cost_tier: 'low',
     });
-    expect(result.budget_applied).toMatchObject({ budget_tokens: 5000, budget_usd: 0.05 });
+    expect(result.budget_applied).toMatchObject({
+      budget_tokens: 5000,
+      budget_usd: 0.05,
+      tokens_unbounded: false,
+      usd_unbounded: false,
+      cost_tier: 'low',
+    });
     expect(result.matches[0].over_budget).toBe(true);
+  });
+});
+
+describe('serializeBudgetApplied (JSON-safety regression)', () => {
+  // Regression for Cursor Bugbot 2026-05-14: Number.POSITIVE_INFINITY in
+  // the recall response was silently turned into `null` by JSON.stringify
+  // in the MCP transport, leaving the caller unable to distinguish
+  // "uncapped on this dimension" from "caller passed nothing".
+
+  it('returns null when no budget is active', () => {
+    const inactive = resolveBudgetCaps({});
+    expect(serializeBudgetApplied(inactive)).toBeNull();
+  });
+
+  it('cost_tier=high serializes to JSON without losing the budget signal', () => {
+    const budget = resolveBudgetCaps({ cost_tier: 'high' });
+    const applied = serializeBudgetApplied(budget);
+    expect(applied).toEqual({
+      budget_tokens: null,
+      budget_usd: null,
+      tokens_unbounded: true,
+      usd_unbounded: true,
+      cost_tier: 'high',
+    });
+    // Round-trip through JSON to prove no field was silently dropped /
+    // converted to a misleading `null`.
+    const roundTripped = JSON.parse(JSON.stringify(applied));
+    expect(roundTripped.tokens_unbounded).toBe(true);
+    expect(roundTripped.usd_unbounded).toBe(true);
+    expect(roundTripped.cost_tier).toBe('high');
+    // Confirm that no Infinity value leaked through (which JSON.stringify
+    // converts to `null`, the bug we are guarding against).
+    expect(JSON.stringify(applied)).not.toMatch(/Infinity/);
+  });
+
+  it('partial cap (only budget_tokens) marks the missing dimension unbounded', () => {
+    const budget = resolveBudgetCaps({ budget_tokens: 1000 });
+    expect(serializeBudgetApplied(budget)).toEqual({
+      budget_tokens: 1000,
+      budget_usd: null,
+      tokens_unbounded: false,
+      usd_unbounded: true,
+      cost_tier: null,
+    });
+  });
+
+  it('partial cap (only budget_usd) marks the missing dimension unbounded', () => {
+    const budget = resolveBudgetCaps({ budget_usd: 0.25 });
+    expect(serializeBudgetApplied(budget)).toEqual({
+      budget_tokens: null,
+      budget_usd: 0.25,
+      tokens_unbounded: true,
+      usd_unbounded: false,
+      cost_tier: null,
+    });
+  });
+
+  it('GepRuntime.recall response stays JSON-safe with cost_tier=high', () => {
+    runtime.recordOutcome({
+      geneId: 'ad_hoc',
+      signals: ['log_error', 'timeout'],
+      status: 'success',
+      score: 0.7,
+      summary: 'A summary that satisfies the minimum length requirement.',
+      cost_tokens: 8000,
+    });
+    const result = runtime.recall({
+      query: 'timeout',
+      signals: ['log_error', 'timeout'],
+      cost_tier: 'high',
+    });
+    // JSON round-trip emulates what the MCP handler does in index.js
+    // (`JSON.stringify(result, null, 2)`); after the fix, the caller
+    // sees `tokens_unbounded: true` instead of a misleading
+    // `budget_tokens: null` indistinguishable from "unset".
+    const wire = JSON.parse(JSON.stringify(result));
+    expect(wire.budget_applied).toEqual({
+      budget_tokens: null,
+      budget_usd: null,
+      tokens_unbounded: true,
+      usd_unbounded: true,
+      cost_tier: 'high',
+    });
   });
 });
