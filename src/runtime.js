@@ -157,7 +157,7 @@ export class GepRuntime {
       signals_extracted: querySignals,
       matches,
       total_memory_events: events.length,
-      budget_applied: budget.active ? { budget_tokens: budget.tokens, budget_usd: budget.usd } : null,
+      budget_applied: budget.active ? serializeBudgetApplied(budget) : null,
     };
   }
 
@@ -701,12 +701,33 @@ export function resolveBudgetCaps({ budget_tokens, budget_usd, cost_tier } = {})
       active: true,
       tokens: tokensExplicit !== null ? tokensExplicit : Number.POSITIVE_INFINITY,
       usd: usdExplicit !== null ? usdExplicit : Number.POSITIVE_INFINITY,
+      tier: null,
     };
   }
   if (tier) {
-    return { active: true, tokens: tier.tokens, usd: tier.usd };
+    return { active: true, tokens: tier.tokens, usd: tier.usd, tier: cost_tier };
   }
-  return { active: false, tokens: Number.POSITIVE_INFINITY, usd: Number.POSITIVE_INFINITY };
+  return { active: false, tokens: Number.POSITIVE_INFINITY, usd: Number.POSITIVE_INFINITY, tier: null };
+}
+
+// JSON-safe projection of an active budget for the recall response.
+// `Number.POSITIVE_INFINITY` is preserved internally for cheap arithmetic
+// (`x > Infinity === false`) but `JSON.stringify` silently turns Infinity
+// into `null`, which is indistinguishable from "caller passed nothing"
+// for the receiving agent. Map uncapped dimensions to `null` AND surface
+// explicit `tokens_unbounded` / `usd_unbounded` flags + the originating
+// `cost_tier` so the caller can disambiguate.
+export function serializeBudgetApplied(budget) {
+  if (!budget || !budget.active) return null;
+  const tokensFinite = Number.isFinite(budget.tokens);
+  const usdFinite = Number.isFinite(budget.usd);
+  return {
+    budget_tokens: tokensFinite ? budget.tokens : null,
+    budget_usd: usdFinite ? budget.usd : null,
+    tokens_unbounded: !tokensFinite,
+    usd_unbounded: !usdFinite,
+    cost_tier: budget.tier || null,
+  };
 }
 
 export function isOverBudget(budget, costTokens, costUsd) {

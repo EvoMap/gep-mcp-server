@@ -65,7 +65,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'gep_recall',
-      description: 'Query the evolution memory graph for relevant past experience. Returns historical signal-gene-outcome mappings that match the query. Use this to check if you have dealt with a similar situation before. Schema 1.7.0 adds optional budget hints (budget_tokens / budget_usd / cost_tier) so callers can drop expensive matches at filter time; matches that exceed the budget are still returned (top 1-2) but flagged with `over_budget: true` so the caller can decide.',
+      description: 'Query the evolution memory graph for relevant past experience. Returns historical signal-gene-outcome mappings that match the query. Use this to check if you have dealt with a similar situation before. Schema 1.7.0 adds optional budget hints (budget_tokens / budget_usd / cost_tier) so callers can drop expensive matches at filter time; matches that exceed the budget are still returned (top 1-2) but flagged with `over_budget: true` so the caller can decide. The response field `budget_applied` is null when no budget was supplied; when a budget is active it is `{ budget_tokens, budget_usd, tokens_unbounded, usd_unbounded, cost_tier }` -- a `null` in `budget_tokens`/`budget_usd` paired with the matching `*_unbounded: true` flag means "no cap on this dimension" (vs "caller passed nothing", which yields `budget_applied: null`).',
       inputSchema: {
         type: 'object',
         properties: {
