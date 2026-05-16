@@ -109,16 +109,20 @@ export class SkillsService {
   } = {}) {
     if (!name || typeof name !== 'string') throw new Error('name is required');
 
-    // Allow disambiguation via "source:name" syntax (mirrors how listSkills
-    // surfaces collisions).
+    // Allow disambiguation via "<source>:<name>" syntax. Strip the prefix
+    // whenever it's recognized — even when the caller also passes an
+    // explicit `source` — because listSkills surfaces collisions in exactly
+    // this format, so it's natural for callers to copy a "bundled:alpha"
+    // entry and pass source='bundled' alongside it. Explicit source still
+    // wins for selecting which root to read from.
     let resolvedSource = source || null;
     let resolvedName = name;
     const colon = name.indexOf(':');
-    if (!resolvedSource && colon > 0) {
+    if (colon > 0) {
       const prefix = name.slice(0, colon);
       if (['bundled', 'local', 'hub'].includes(prefix)) {
-        resolvedSource = prefix;
         resolvedName = name.slice(colon + 1);
+        if (!resolvedSource) resolvedSource = prefix;
       }
     }
 

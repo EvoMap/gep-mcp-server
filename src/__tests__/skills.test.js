@@ -96,6 +96,16 @@ describe('SkillsService', () => {
     expect(result.version).toBe('1.0.0');
   });
 
+  it('strips "<source>:" prefix even when explicit source is also passed', async () => {
+    // listSkills surfaces collisions as "bundled:alpha" — callers naturally
+    // copy that name and may also set source explicitly. Both forms must
+    // resolve to the same skill.
+    makeSkill(localRoot, 'alpha', { name: 'alpha', version: '9.9.9', description: 'local alpha' });
+    const result = await service.loadSkill({ name: 'bundled:alpha', source: 'bundled' });
+    expect(result.source).toBe('bundled');
+    expect(result.version).toBe('1.0.0');
+  });
+
   it('truncates content above maxBytes', async () => {
     const result = await service.loadSkill({ name: 'alpha', maxBytes: 1024 });
     if (Buffer.byteLength(readFileSync(join(bundledRoot, 'alpha', 'SKILL.md'), 'utf8')) > 1024) {
