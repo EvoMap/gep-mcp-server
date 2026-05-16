@@ -13,6 +13,7 @@ import {
   validateGene,
   validateValidationReport,
 } from './protocol.js';
+import { SkillsService, defaultBundledRoot, defaultLocalRoot } from './skills.js';
 
 const DEFAULT_HUB_URL = 'https://evomap.ai';
 const TIMEOUT_MS = 15000;
@@ -91,6 +92,57 @@ export class RemoteRuntime {
     }
     this._fetch = fetchImpl || ((url, opts) => fetch(url, opts));
     this._sleep = sleepImpl || sleep;
+    // Even in remote mode the agent can still pull `bundled` and `local` skills
+    // off the host filesystem; only the `hub` source rides the network. Hub
+    // endpoints are additive and may be missing on older Hub deploys, in
+    // which case fetchSkillList/fetchSkill return empty + a warning.
+    this.skills = new SkillsService({
+      bundledRoot: defaultBundledRoot(null),
+      localRoot: defaultLocalRoot(),
+      hubFetch: (req) => this._hubSkillFetch(req),
+      isRemote: true,
+    });
+  }
+
+  listSkills(args) { return this.skills.listSkills(args || {}); }
+  loadSkill(args) { return this.skills.loadSkill(args || {}); }
+
+  async _hubSkillFetch({ op, name, version }) {
+    if (op === 'list') return this.fetchSkillList();
+    if (op === 'fetch') return this.fetchSkill({ name, version });
+    return null;
+  }
+
+  async fetchSkillList(args = {}) {
+    try {
+      const params = new URLSearchParams();
+      if (args.query) params.set('q', String(args.query).slice(0, 200));
+      params.set('limit', String(clampPositive(args.limit, 50, 200)));
+      const path = `/a2a/skill/store/list${params.toString() ? '?' + params.toString() : ''}`;
+      return await this._request('GET', path);
+    } catch (err) {
+      // Older Hub deploys return 404; treat as "no remote skills" rather than
+      // a hard error so list_skill {source:"all"} still surfaces local +
+      // bundled results.
+      if (/returned 404/.test(err.message) || /returned 501/.test(err.message)) {
+        return { skills: [], warning: `hub list endpoint unavailable: ${err.message}` };
+      }
+      throw err;
+    }
+  }
+
+  async fetchSkill({ name, version } = {}) {
+    if (!name) throw new Error('fetchSkill requires name');
+    try {
+      const params = new URLSearchParams({ name: String(name) });
+      if (version) params.set('version', String(version));
+      return await this._request('GET', `/a2a/skill/store/fetch?${params.toString()}`);
+    } catch (err) {
+      if (/returned 404/.test(err.message) || /returned 501/.test(err.message)) {
+        return null;
+      }
+      throw err;
+    }
   }
 
   async _request(method, path, body) {
@@ -513,4 +565,10 @@ export class RemoteRuntime {
       hub_url: this.hubUrl,
     };
   }
+}
+
+function clampPositive(value, defaultV, max) {
+  const n = parseInt(value, 10);
+  if (!Number.isFinite(n) || n <= 0) return defaultV;
+  return Math.min(n, max);
 }
