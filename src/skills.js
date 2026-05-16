@@ -1,6 +1,6 @@
 import {
   existsSync, readFileSync, writeFileSync, readdirSync, statSync,
-  mkdirSync, copyFileSync,
+  mkdirSync, copyFileSync, rmSync,
 } from 'node:fs';
 import { resolve, join, relative, isAbsolute, sep as PATH_SEP } from 'node:path';
 import { homedir } from 'node:os';
@@ -322,6 +322,12 @@ export class SkillsService {
     }
     if (existsSync(targetDir) && !force) {
       throw new Error(`skill already installed at ${targetDir}; pass force:true to overwrite`);
+    }
+    // force:true semantics is "replace", not "merge". Wipe the target dir
+    // first so files that existed in the previous install but not in the
+    // new source don't linger as stale leftovers.
+    if (existsSync(targetDir)) {
+      rmSync(targetDir, { recursive: true, force: true });
     }
     mkdirSync(targetDir, { recursive: true });
     if (sourceDir) {

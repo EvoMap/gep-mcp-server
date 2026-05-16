@@ -194,6 +194,21 @@ describe('SkillsService', () => {
     expect(seen).toEqual([{ op: 'list', query: 'rabbit', limit: 7 }]);
   });
 
+  it('force install replaces target dir, leaving no stale files from previous version', async () => {
+    // Install bundled alpha (only has SKILL.md). Plant a stale file in the
+    // target as if it came from a previous install. Force re-install should
+    // wipe it out, not leave it merged in.
+    await service.loadSkill({ name: 'alpha', source: 'bundled', install: true });
+    const stale = join(localRoot, 'alpha', 'STALE.txt');
+    writeFileSync(stale, 'leftover from a prior version', 'utf8');
+    expect(existsSync(stale)).toBe(true);
+
+    const result = await service.loadSkill({ name: 'alpha', source: 'bundled', install: true, force: true });
+    expect(result.ok).toBe(true);
+    expect(existsSync(join(localRoot, 'alpha', 'SKILL.md'))).toBe(true);
+    expect(existsSync(stale)).toBe(false); // stale file gone
+  });
+
   it('install on a local-only skill returns a clear noop instead of "not found"', async () => {
     // "beta" lives only in localRoot. install with no source previously
     // walked [bundled, hub] and threw "not found" even though gep_list_skill
