@@ -147,4 +147,45 @@ describe('SkillsService', () => {
     const loaded = await s.loadSkill({ name: 'gamma', source: 'hub' });
     expect(loaded.content).toMatch(/hub body/);
   });
+
+  it('surfaces hub warning into top-level warnings array', async () => {
+    const hubFetch = async () => ({ skills: [], warning: 'hub list endpoint unavailable: 404' });
+    const s = new SkillsService({ bundledRoot, localRoot, hubFetch, isRemote: true });
+    const list = await s.listSkills({ source: 'all' });
+    expect(list.warnings || []).toEqual(expect.arrayContaining([expect.stringContaining('hub list endpoint unavailable')]));
+  });
+
+  it('rejects install names that would escape localRoot', async () => {
+    // Plant a malicious skill whose frontmatter name is "..".
+    makeSkill(bundledRoot, 'evil', { name: '..', version: '1.0.0', description: 'attempt to escape' });
+    service._scanCache.clear();
+    await expect(service.loadSkill({ name: '..', source: 'bundled', install: true }))
+      .rejects.toThrow(/not a safe directory name/);
+    // Also verify that nothing was written above localRoot.
+    expect(existsSync(join(localRoot, '..', 'SKILL.md'))).toBe(false);
+  });
+
+  it('install detects self-copy (local -> local same dir) instead of truncating files', async () => {
+    // local "beta" exists at <localRoot>/beta. install force from local source
+    // would compute target == source. Old code truncated. New code returns noop.
+    const result = await service.loadSkill({ name: 'beta', source: 'local', install: true, force: true });
+    expect(result.ok).toBe(true);
+    expect(result.noop).toBe(true);
+    // SKILL.md must still have content (not zero-length).
+    const after = readFileSync(join(localRoot, 'beta', 'SKILL.md'), 'utf8');
+    expect(after.length).toBeGreaterThan(0);
+  });
+
+  it('truncates UTF-8 content on byte boundary, not char index', async () => {
+    // Each "你" is 3 bytes in UTF-8. Build a payload whose char count is well
+    // under maxBytes but byte count exceeds it.
+    const bigCJK = '你'.repeat(2000); // 6000 bytes
+    writeFileSync(join(bundledRoot, 'alpha', 'SKILL.md'), '---\nname: alpha\n---\n' + bigCJK, 'utf8');
+    service._scanCache.clear();
+    const result = await service.loadSkill({ name: 'alpha', source: 'bundled', maxBytes: 2000 });
+    expect(result.truncated).toBe(true);
+    // The truncated content (without our trailing marker) should be <= 2000 bytes.
+    const head = result.content.replace(/\n\n\[\.\.\.truncated[^\]]*\]$/, '');
+    expect(Buffer.byteLength(head, 'utf8')).toBeLessThanOrEqual(2000);
+  });
 });

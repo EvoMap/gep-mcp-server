@@ -13,7 +13,7 @@ import {
   validateGene,
   validateValidationReport,
 } from './protocol.js';
-import { SkillsService, defaultBundledRoot, defaultLocalRoot } from './skills.js';
+import { SkillsService, defaultBundledRoot, defaultLocalRoot, clampPositive } from './skills.js';
 
 const DEFAULT_HUB_URL = 'https://evomap.ai';
 const TIMEOUT_MS = 15000;
@@ -565,10 +565,4 @@ export class RemoteRuntime {
       hub_url: this.hubUrl,
     };
   }
-}
-
-function clampPositive(value, defaultV, max) {
-  const n = parseInt(value, 10);
-  if (!Number.isFinite(n) || n <= 0) return defaultV;
-  return Math.min(n, max);
 }

@@ -364,8 +364,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       case 'gep_list_skill':
         return { content: [{ type: 'text', text: JSON.stringify(await runtime.listSkills(args), null, 2) }] };
-      case 'gep_load_skill':
+      case 'gep_load_skill': {
+        if (IS_REMOTE && args?.install) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'local_only', tool: 'gep_load_skill', hint: 'install:true requires local mode. Set ASSETS_DIR and MEMORY_DIR instead of EVOMAP_API_KEY, or call without install:true to receive the skill content as a tool result.' }) }], isError: true };
+        }
         return { content: [{ type: 'text', text: JSON.stringify(await runtime.loadSkill(args), null, 2) }] };
+      }
       case 'gep_export': {
         if (IS_REMOTE) return { content: [{ type: 'text', text: JSON.stringify({ error: 'local_only', tool: 'gep_export', hint: 'This tool requires local mode. Set ASSETS_DIR and MEMORY_DIR instead of EVOMAP_API_KEY.' }) }], isError: true };
         return { content: [{ type: 'text', text: JSON.stringify(runtime.exportEvolution(args), null, 2) }] };

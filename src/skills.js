@@ -71,7 +71,9 @@ export class SkillsService {
         else if (src === 'local') list = this._listLocal();
         else if (src === 'hub') {
           if (!this.hubFetch) { warnings.push('hub source unavailable: remote auth not configured'); continue; }
-          list = await this._listHub();
+          const hubResult = await this._listHub();
+          list = hubResult.items;
+          if (hubResult.warning) warnings.push(`hub: ${hubResult.warning}`);
         } else {
           warnings.push(`unknown source: ${src}`);
           continue;
@@ -120,7 +122,11 @@ export class SkillsService {
       }
     }
 
-    const order = resolvedSource ? [resolvedSource] : ['local', 'bundled', 'hub'];
+    // For install without an explicit source, skip `local` — installing a
+    // local skill onto itself is a self-copy that used to truncate files.
+    // Read-only loads still walk local first (cheaper, no network).
+    const defaultOrder = install ? ['bundled', 'hub'] : ['local', 'bundled', 'hub'];
+    const order = resolvedSource ? [resolvedSource] : defaultOrder;
     let found = null;
     for (const src of order) {
       const candidate = await this._readOne(src, resolvedName, version);
@@ -145,7 +151,7 @@ export class SkillsService {
     let content = found.content;
     let truncated = false;
     if (Buffer.byteLength(content, 'utf8') > limit) {
-      content = content.slice(0, limit) + '\n\n[...truncated; pass install:true to access the full skill...]';
+      content = truncateUtf8(content, limit) + '\n\n[...truncated; pass install:true to access the full skill...]';
       truncated = true;
     }
     return {
@@ -182,11 +188,13 @@ export class SkillsService {
   }
 
   async _listHub() {
-    if (!this.hubFetch) return [];
+    if (!this.hubFetch) return { items: [], warning: null };
     const data = await this.hubFetch({ op: 'list' });
-    if (Array.isArray(data?.skills)) return data.skills;
-    if (Array.isArray(data?.assets)) {
-      return data.assets.map(a => ({
+    const warning = (data && typeof data.warning === 'string') ? data.warning : null;
+    let items = [];
+    if (Array.isArray(data?.skills)) items = data.skills;
+    else if (Array.isArray(data?.assets)) {
+      items = data.assets.map(a => ({
         name: a.name || a.skill_id || a.id,
         version: a.version || null,
         description: a.description || a.summary || null,
@@ -194,7 +202,7 @@ export class SkillsService {
         sizeBytes: typeof a.sizeBytes === 'number' ? a.sizeBytes : null,
       }));
     }
-    return [];
+    return { items, warning };
   }
 
   _scanDir(rootAbs) {
@@ -265,14 +273,32 @@ export class SkillsService {
 
   _install(found, { force }) {
     if (!this.localRoot) throw new Error('local skill root not configured');
-    const safeName = found.name.replace(/[/\\:]/g, '_');
-    const targetDir = join(this.localRoot, safeName);
+    const safeName = sanitizeInstallName(found.name);
+    if (!safeName) throw new Error(`refusing to install: name "${found.name}" is not a safe directory name`);
+    const targetDir = resolve(join(this.localRoot, safeName));
+    // Defense-in-depth: ensure resolved path is still inside localRoot.
+    const rootResolved = resolve(this.localRoot);
+    if (targetDir !== rootResolved && !targetDir.startsWith(rootResolved + '/')) {
+      throw new Error(`refusing to install: resolved path ${targetDir} escapes ${rootResolved}`);
+    }
+    const sourceDir = (found.rootAbs && found.dir) ? resolve(join(found.rootAbs, found.dir)) : null;
+    // Self-copy is a no-op that on most platforms truncates each file to
+    // zero bytes (copyFileSync of file -> itself). Detect and reject.
+    if (sourceDir && sourceDir === targetDir) {
+      return {
+        ok: true,
+        name: found.name,
+        installedPath: targetDir,
+        message: `Skill already lives at ${targetDir} (source == target); no-op.`,
+        noop: true,
+      };
+    }
     if (existsSync(targetDir) && !force) {
       throw new Error(`skill already installed at ${targetDir}; pass force:true to overwrite`);
     }
     mkdirSync(targetDir, { recursive: true });
-    if (found.rootAbs && found.dir) {
-      copyDir(join(found.rootAbs, found.dir), targetDir);
+    if (sourceDir) {
+      copyDir(sourceDir, targetDir);
     } else {
       writeFileSync(join(targetDir, 'SKILL.md'), found.content, 'utf8');
     }
@@ -292,11 +318,36 @@ function matchesQuery(item, query) {
     .some(s => String(s).toLowerCase().includes(q));
 }
 
-function clampLimit(value, defaultV, max) {
+// Reject names that contain path separators, NUL, or are only dots — those
+// can escape localRoot when joined. Returns '' for unsafe names so the
+// caller can refuse the install rather than silently rewriting the path.
+function sanitizeInstallName(rawName) {
+  const trimmed = String(rawName || '').trim();
+  if (!trimmed) return '';
+  if (/[/\\:\0]/.test(trimmed)) return '';
+  if (/^\.+$/.test(trimmed)) return '';
+  return trimmed;
+}
+
+// Truncate a UTF-8 string to <= maxBytes without splitting a multi-byte
+// codepoint. content.slice(0, n) operates on UTF-16 code units, which can
+// produce up to ~3× the intended byte length for CJK / emoji content.
+function truncateUtf8(content, maxBytes) {
+  const buf = Buffer.from(content, 'utf8');
+  if (buf.length <= maxBytes) return content;
+  let cut = maxBytes;
+  while (cut > 0 && (buf[cut] & 0xc0) === 0x80) cut -= 1;
+  return buf.slice(0, cut).toString('utf8');
+}
+
+export function clampPositive(value, defaultV, max) {
   const n = parseInt(value, 10);
   if (!Number.isFinite(n) || n <= 0) return defaultV;
   return Math.min(n, max);
 }
+
+// Backwards-compatible alias used by the listSkills hot path.
+const clampLimit = clampPositive;
 
 function copyDir(src, dest) {
   mkdirSync(dest, { recursive: true });
