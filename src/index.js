@@ -16,6 +16,7 @@ import { existsSync, readFileSync } from 'node:fs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import { GepRuntime } from './runtime.js';
 import { RemoteRuntime } from './remote.js';
+import { annotateSearchPayload } from './searchEnrich.js';
 
 const ASSETS_DIR = process.env.GEP_ASSETS_DIR || resolve(process.cwd(), 'assets/gep');
 const MEMORY_DIR = process.env.GEP_MEMORY_DIR || resolve(process.cwd(), 'memory/evolution');
@@ -314,21 +315,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!args.query || typeof args.query !== 'string' || args.query.trim().length < 2) {
           return { content: [{ type: 'text', text: JSON.stringify({ error: 'query must be a string with at least 2 characters' }) }], isError: true };
         }
+        let data;
         if (IS_REMOTE) {
-          const data = await runtime.searchCommunity(args);
-          return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+          data = await runtime.searchCommunity(args);
+        } else {
+          const params = new URLSearchParams();
+          params.set('q', args.query.trim().slice(0, 500));
+          if (args.type && ['Gene', 'Capsule'].includes(args.type)) params.set('type', args.type);
+          if (args.outcome && ['success', 'failed'].includes(args.outcome)) params.set('outcome', args.outcome);
+          params.set('limit', String(Math.min(Math.max(1, parseInt(args.limit, 10) || 10), 50)));
+          params.set('include_context', 'true');
+          const url = `${HUB_URL}/a2a/assets/semantic-search?${params.toString()}`;
+          const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+          if (!res.ok) throw new Error(`Hub returned ${res.status}`);
+          data = await res.json();
         }
-        const params = new URLSearchParams();
-        params.set('q', args.query.trim().slice(0, 500));
-        if (args.type && ['Gene', 'Capsule'].includes(args.type)) params.set('type', args.type);
-        if (args.outcome && ['success', 'failed'].includes(args.outcome)) params.set('outcome', args.outcome);
-        params.set('limit', String(Math.min(Math.max(1, parseInt(args.limit, 10) || 10), 50)));
-        params.set('include_context', 'true');
-        const url = `${HUB_URL}/a2a/assets/semantic-search?${params.toString()}`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-        if (!res.ok) throw new Error(`Hub returned ${res.status}`);
-        const data = await res.json();
-        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+        // Annotate every asset with similarity_band and confidence_band so
+        // callers do not fall into the 0.6 trust trap (similarity high enough
+        // to look real, too low to actually solve the query). Purely
+        // additive: existing payload shape is preserved.
+        const enriched = annotateSearchPayload(data);
+        return { content: [{ type: 'text', text: JSON.stringify(enriched, null, 2) }] };
       }
       case 'gep_publish_bundle':
         return { content: [{ type: 'text', text: JSON.stringify(await runtime.publishBundle(args), null, 2) }] };
