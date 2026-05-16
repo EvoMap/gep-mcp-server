@@ -196,7 +196,7 @@ export class SkillsService {
     if (existsSync(indexPath)) {
       try {
         const raw = JSON.parse(readFileSync(indexPath, 'utf8'));
-        if (Array.isArray(raw)) return raw.map(x => ({ ...x }));
+        if (Array.isArray(raw)) return raw.map(x => normalizeTags({ ...x }));
       } catch {
         // Fall through to directory scan if index.json is malformed.
       }
@@ -215,7 +215,7 @@ export class SkillsService {
     const data = await this.hubFetch({ op: 'list', query, limit });
     const warning = (data && typeof data.warning === 'string') ? data.warning : null;
     let items = [];
-    if (Array.isArray(data?.skills)) items = data.skills;
+    if (Array.isArray(data?.skills)) items = data.skills.map(s => normalizeTags({ ...s }));
     else if (Array.isArray(data?.assets)) {
       items = data.assets.map(a => ({
         name: a.name || a.skill_id || a.id,
@@ -344,9 +344,26 @@ export class SkillsService {
   }
 }
 
+// Coerce item.tags to a string[] regardless of how the source delivers it.
+// Without this, hub returning {tags: "a, b"} or a malformed bundled index
+// causes `[...item.tags]` in matchesQuery to spread a string into individual
+// characters, silently breaking multi-character tag queries.
+function normalizeTags(item) {
+  if (!item || typeof item !== 'object') return item;
+  const t = item.tags;
+  if (Array.isArray(t)) return item;
+  if (typeof t === 'string') {
+    item.tags = t.split(/\s*,\s*/).filter(Boolean);
+  } else {
+    item.tags = [];
+  }
+  return item;
+}
+
 function matchesQuery(item, query) {
   const q = String(query).toLowerCase();
-  return [item.name, item.description, ...(item.tags || [])]
+  const tags = Array.isArray(item.tags) ? item.tags : [];
+  return [item.name, item.description, ...tags]
     .filter(Boolean)
     .some(s => String(s).toLowerCase().includes(q));
 }

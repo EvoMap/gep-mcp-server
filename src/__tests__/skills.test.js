@@ -186,6 +186,20 @@ describe('SkillsService', () => {
     expect(after.length).toBeGreaterThan(0);
   });
 
+  it('normalizes hub tags so query matches multi-char tag strings', async () => {
+    // Hub returns tags as a comma-separated string in some deployments.
+    // Without normalization, matchesQuery spreads the string into chars
+    // and "deployment" would never match "deploy, ops".
+    const hubFetch = async () => ({
+      skills: [
+        { name: 'opscat', version: '1.0.0', description: 'ops cat tool', tags: 'deploy, ops, infra' },
+      ],
+    });
+    const s = new SkillsService({ bundledRoot, localRoot, hubFetch, isRemote: true });
+    const result = await s.listSkills({ source: 'hub', query: 'deploy' });
+    expect(result.skills.map(x => x.name)).toContain('opscat');
+  });
+
   it('forwards query/limit to hub on listSkills', async () => {
     const seen = [];
     const hubFetch = async (req) => { seen.push(req); return { skills: [] }; };
