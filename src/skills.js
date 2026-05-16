@@ -2,7 +2,7 @@ import {
   existsSync, readFileSync, writeFileSync, readdirSync, statSync,
   mkdirSync, copyFileSync,
 } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { resolve, join, relative, isAbsolute, sep as PATH_SEP } from 'node:path';
 import { homedir } from 'node:os';
 
 const DEFAULT_MAX_BYTES = 64000;
@@ -275,10 +275,14 @@ export class SkillsService {
     if (!this.localRoot) throw new Error('local skill root not configured');
     const safeName = sanitizeInstallName(found.name);
     if (!safeName) throw new Error(`refusing to install: name "${found.name}" is not a safe directory name`);
-    const targetDir = resolve(join(this.localRoot, safeName));
-    // Defense-in-depth: ensure resolved path is still inside localRoot.
     const rootResolved = resolve(this.localRoot);
-    if (targetDir !== rootResolved && !targetDir.startsWith(rootResolved + '/')) {
+    const targetDir = resolve(join(rootResolved, safeName));
+    // Defense-in-depth: ensure the resolved target is strictly inside
+    // localRoot. relative() is sep-agnostic so this works on Windows where
+    // resolve() yields "\\" separators. A safe install produces a non-empty,
+    // non-".." relative path that is not absolute (different drive).
+    const rel = relative(rootResolved, targetDir);
+    if (!rel || rel === '..' || rel.startsWith('..' + PATH_SEP) || rel.startsWith('../') || isAbsolute(rel)) {
       throw new Error(`refusing to install: resolved path ${targetDir} escapes ${rootResolved}`);
     }
     const sourceDir = (found.rootAbs && found.dir) ? resolve(join(found.rootAbs, found.dir)) : null;
