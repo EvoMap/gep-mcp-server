@@ -148,6 +148,63 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'gep_list_skill',
+      description: 'List skills available across bundled (shipped with evolver), local (~/.claude/skills/), and hub (community) sources. Use this before gep_load_skill to discover what is available. The bootstrap _meta skill is hidden by default; pass a query to surface it.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          source: {
+            type: 'string',
+            enum: ['bundled', 'local', 'hub', 'all'],
+            description: 'Which source to list. Defaults to "all".',
+          },
+          query: {
+            type: 'string',
+            description: 'Optional substring filter applied to name / description / tags',
+          },
+          limit: {
+            type: 'number',
+            description: 'Max results (default 50, max 200)',
+          },
+        },
+      },
+    },
+    {
+      name: 'gep_load_skill',
+      description: 'Fetch a skill\'s SKILL.md content. Default returns the markdown as a tool result so you can apply it for the current turn. Pass install:true (local mode only) to copy the skill directory into ~/.claude/skills/<name>/ for native Claude Code Skill use across sessions. Resolution priority is local > bundled > hub; disambiguate collisions with "<source>:<name>".',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Skill name. Use "bundled:<name>", "local:<name>", or "hub:<name>" to force a source.',
+          },
+          source: {
+            type: 'string',
+            enum: ['bundled', 'local', 'hub'],
+            description: 'Optional explicit source. Overrides the prefix syntax in name.',
+          },
+          version: {
+            type: 'string',
+            description: 'Optional version pin (hub source only).',
+          },
+          install: {
+            type: 'boolean',
+            description: 'If true, copy to ~/.claude/skills/<name>/ instead of returning content. Local mode only.',
+          },
+          force: {
+            type: 'boolean',
+            description: 'When install:true, overwrite an existing local skill of the same name.',
+          },
+          maxBytes: {
+            type: 'number',
+            description: 'Truncation cap for returned content (default 64000). Skills larger than this are truncated; pass install:true to access the full file.',
+          },
+        },
+        required: ['name'],
+      },
+    },
+    {
       name: 'gep_export',
       description: 'Export the complete evolution history as a portable .gepx archive. This is your sovereign evolution data.',
       inputSchema: {
@@ -304,6 +361,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'gep_install_gene': {
         if (IS_REMOTE) return { content: [{ type: 'text', text: JSON.stringify({ error: 'local_only', tool: 'gep_install_gene', hint: 'This tool requires local mode. Set ASSETS_DIR and MEMORY_DIR instead of EVOMAP_API_KEY.' }) }], isError: true };
         return { content: [{ type: 'text', text: JSON.stringify(runtime.installGene(args), null, 2) }] };
+      }
+      case 'gep_list_skill':
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.listSkills(args), null, 2) }] };
+      case 'gep_load_skill': {
+        if (IS_REMOTE && args?.install) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'local_only', tool: 'gep_load_skill', hint: 'install:true requires local mode. Set ASSETS_DIR and MEMORY_DIR instead of EVOMAP_API_KEY, or call without install:true to receive the skill content as a tool result.' }) }], isError: true };
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.loadSkill(args), null, 2) }] };
       }
       case 'gep_export': {
         if (IS_REMOTE) return { content: [{ type: 'text', text: JSON.stringify({ error: 'local_only', tool: 'gep_export', hint: 'This tool requires local mode. Set ASSETS_DIR and MEMORY_DIR instead of EVOMAP_API_KEY.' }) }], isError: true };

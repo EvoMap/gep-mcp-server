@@ -24,7 +24,8 @@
     "src/index.js",
     "src/protocol.js",
     "src/remote.js",
-    "src/runtime.js"
+    "src/runtime.js",
+    "src/skills.js"
   ],
   "author": "EvoMap",
   "license": "GPL-3.0-or-later",
