@@ -186,6 +186,24 @@ describe('SkillsService', () => {
     expect(after.length).toBeGreaterThan(0);
   });
 
+  it('forwards query/limit to hub on listSkills', async () => {
+    const seen = [];
+    const hubFetch = async (req) => { seen.push(req); return { skills: [] }; };
+    const s = new SkillsService({ bundledRoot, localRoot, hubFetch, isRemote: true });
+    await s.listSkills({ source: 'hub', query: 'rabbit', limit: 7 });
+    expect(seen).toEqual([{ op: 'list', query: 'rabbit', limit: 7 }]);
+  });
+
+  it('install on a local-only skill returns a clear noop instead of "not found"', async () => {
+    // "beta" lives only in localRoot. install with no source previously
+    // walked [bundled, hub] and threw "not found" even though gep_list_skill
+    // had surfaced it.
+    const result = await service.loadSkill({ name: 'beta', install: true });
+    expect(result.ok).toBe(true);
+    expect(result.noop).toBe(true);
+    expect(result.installedPath).toContain('beta');
+  });
+
   it('truncates UTF-8 content on byte boundary, not char index', async () => {
     // Each "你" is 3 bytes in UTF-8. Build a payload whose char count is well
     // under maxBytes but byte count exceeds it.

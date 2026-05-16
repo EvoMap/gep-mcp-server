@@ -71,7 +71,10 @@ export class SkillsService {
         else if (src === 'local') list = this._listLocal();
         else if (src === 'hub') {
           if (!this.hubFetch) { warnings.push('hub source unavailable: remote auth not configured'); continue; }
-          const hubResult = await this._listHub();
+          // Forward the user's filter + cap to the hub. Without this, hub
+          // always returned a fixed 50 unfiltered results and any skill
+          // beyond that page was unreachable through list_skill.
+          const hubResult = await this._listHub({ query, limit: cap });
           list = hubResult.items;
           if (hubResult.warning) warnings.push(`hub: ${hubResult.warning}`);
         } else {
@@ -137,6 +140,22 @@ export class SkillsService {
       if (candidate) { found = { ...candidate, source: src }; break; }
     }
     if (!found) {
+      // Special case: install with no explicit source skips local. If the
+      // skill exists only locally, report that clearly instead of a
+      // generic "not found" — installing a local skill onto itself is the
+      // self-copy bug we deliberately avoid.
+      if (install && !resolvedSource) {
+        const local = await this._readOne('local', resolvedName, version);
+        if (local) {
+          return {
+            ok: true,
+            name: local.name,
+            installedPath: join(this.localRoot, local.dir || resolvedName),
+            message: `Skill "${resolvedName}" is already a local skill at ~/.claude/skills/. No install needed.`,
+            noop: true,
+          };
+        }
+      }
       throw new Error(`skill not found: ${resolvedName}${resolvedSource ? ' (source=' + resolvedSource + ')' : ''}`);
     }
 
@@ -191,9 +210,9 @@ export class SkillsService {
     return this._scanDir(this.localRoot);
   }
 
-  async _listHub() {
+  async _listHub({ query, limit } = {}) {
     if (!this.hubFetch) return { items: [], warning: null };
-    const data = await this.hubFetch({ op: 'list' });
+    const data = await this.hubFetch({ op: 'list', query, limit });
     const warning = (data && typeof data.warning === 'string') ? data.warning : null;
     let items = [];
     if (Array.isArray(data?.skills)) items = data.skills;

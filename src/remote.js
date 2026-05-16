@@ -107,8 +107,8 @@ export class RemoteRuntime {
   listSkills(args) { return this.skills.listSkills(args || {}); }
   loadSkill(args) { return this.skills.loadSkill(args || {}); }
 
-  async _hubSkillFetch({ op, name, version }) {
-    if (op === 'list') return this.fetchSkillList();
+  async _hubSkillFetch({ op, name, version, query, limit }) {
+    if (op === 'list') return this.fetchSkillList({ query, limit });
     if (op === 'fetch') return this.fetchSkill({ name, version });
     return null;
   }
