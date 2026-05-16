@@ -170,7 +170,14 @@ export class SkillsService {
       return this._install(found, { force });
     }
 
-    const limit = Math.max(1024, Number(maxBytes) || DEFAULT_MAX_BYTES);
+    // Distinguish "not provided" (use default) from "explicitly 0/NaN"
+    // (treat as min cap). Previous `Number(maxBytes) || DEFAULT_MAX_BYTES`
+    // silently turned 0 into 64000, which surprised callers expecting
+    // `maxBytes: 0` to mean "no headroom; cap to the floor."
+    const requested = Number(maxBytes);
+    const limit = Number.isFinite(requested) && requested > 0
+      ? Math.max(1024, requested)
+      : 1024;
     let content = found.content;
     let truncated = false;
     if (Buffer.byteLength(content, 'utf8') > limit) {
@@ -217,11 +224,11 @@ export class SkillsService {
     let items = [];
     if (Array.isArray(data?.skills)) items = data.skills.map(s => normalizeTags({ ...s }));
     else if (Array.isArray(data?.assets)) {
-      items = data.assets.map(a => ({
+      items = data.assets.map(a => normalizeTags({
         name: a.name || a.skill_id || a.id,
         version: a.version || null,
         description: a.description || a.summary || null,
-        tags: Array.isArray(a.tags) ? a.tags : [],
+        tags: a.tags,
         sizeBytes: typeof a.sizeBytes === 'number' ? a.sizeBytes : null,
       }));
     }

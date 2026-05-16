@@ -186,6 +186,36 @@ describe('SkillsService', () => {
     expect(after.length).toBeGreaterThan(0);
   });
 
+  it('normalizes tags on the hub data.assets fallback branch', async () => {
+    // Some Hub deploys return { assets: [...] } shape (vs { skills: [...] }).
+    // Without normalization on this branch, string tags were silently
+    // discarded to [] and queries on tags would never hit.
+    const hubFetch = async () => ({
+      assets: [
+        { skill_id: 'opscat', version: '1.0.0', summary: 'ops cat', tags: 'deploy, ops, infra' },
+      ],
+    });
+    const s = new SkillsService({ bundledRoot, localRoot, hubFetch, isRemote: true });
+    const result = await s.listSkills({ source: 'hub', query: 'deploy' });
+    expect(result.skills.map(x => x.name)).toContain('opscat');
+  });
+
+  it('treats maxBytes:0 as floor, but maxBytes undefined as default', async () => {
+    // Bug: prior `Number(x) || DEFAULT` silently turned 0 into 64000.
+    // Build a payload large enough to exceed the 1024 floor so we can
+    // distinguish 0-as-floor from undefined-as-default.
+    const padding = '#'.repeat(8000);
+    writeFileSync(join(bundledRoot, 'alpha', 'SKILL.md'), '---\nname: alpha\n---\n' + padding, 'utf8');
+    service._scanCache.clear();
+
+    const explicitZero = await service.loadSkill({ name: 'alpha', source: 'bundled', maxBytes: 0 });
+    expect(explicitZero.truncated).toBe(true); // capped at 1024 floor, not promoted to default
+    expect(Buffer.byteLength(explicitZero.content.replace(/\n\n\[\.\.\.[^\]]*\]$/, ''), 'utf8')).toBeLessThanOrEqual(1024);
+
+    const noArg = await service.loadSkill({ name: 'alpha', source: 'bundled' });
+    expect(noArg.truncated).toBe(false); // 8000 < 64000 default, no truncation
+  });
+
   it('normalizes hub tags so query matches multi-char tag strings', async () => {
     // Hub returns tags as a comma-separated string in some deployments.
     // Without normalization, matchesQuery spreads the string into chars
