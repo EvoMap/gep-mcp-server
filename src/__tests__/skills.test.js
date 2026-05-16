@@ -24,6 +24,11 @@ describe('parseFrontmatter', () => {
   it('returns {} when no frontmatter', () => {
     expect(parseFrontmatter('# just a heading')).toEqual({});
   });
+
+  it('lowercases keys so consumers can rely on fm.name etc.', () => {
+    const md = '---\nName: foo\nDescription: bar\n---\n\nbody';
+    expect(parseFrontmatter(md)).toEqual({ name: 'foo', description: 'bar' });
+  });
 });
 
 describe('SkillsService', () => {

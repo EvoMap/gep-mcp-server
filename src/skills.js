@@ -30,7 +30,7 @@ export function parseFrontmatter(md) {
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
-    out[m[1]] = val;
+    out[m[1].toLowerCase()] = val;
   }
   return out;
 }
