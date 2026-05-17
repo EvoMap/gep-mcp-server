@@ -12,8 +12,10 @@ import {
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const requireFromHere = createRequire(import.meta.url);
 import { GepRuntime } from './runtime.js';
 import { RemoteRuntime } from './remote.js';
 import { annotateSearchPayload } from './searchEnrich.js';
@@ -451,14 +453,24 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const { uri } = request.params;
   switch (uri) {
     case 'gep://spec': {
-      const candidates = [
-        resolve(ASSETS_DIR, 'gep-spec-v1.md'),
-        resolve(__dirname, '../../gep-protocol/spec/gep-spec-v1.md'),
-      ];
-      const specPath = candidates.find(p => existsSync(p));
+      // Resolve from the @evomap/gep-sdk package (the GEP single source of
+      // truth) as the primary path; fall back to a user-supplied
+      // GEP_ASSETS_DIR copy if someone wants to pin an older spec for
+      // reproducibility.
+      let specPath = null;
+      try {
+        specPath = requireFromHere.resolve('@evomap/gep-sdk/spec/gep-spec-v1.md');
+      } catch (_err) {
+        // npm subpath export not resolvable in this layout; fall through to
+        // the GEP_ASSETS_DIR lookup so the resource still works.
+      }
+      if (!specPath || !existsSync(specPath)) {
+        const userPath = resolve(ASSETS_DIR, 'gep-spec-v1.md');
+        specPath = existsSync(userPath) ? userPath : null;
+      }
       const content = specPath
         ? readFileSync(specPath, 'utf8')
-        : 'GEP spec not found. Place gep-spec-v1.md in your GEP_ASSETS_DIR or install gep-protocol alongside this package.';
+        : 'GEP spec not found. Reinstall this package (it depends on @evomap/gep-sdk which ships the spec), or place gep-spec-v1.md in your GEP_ASSETS_DIR.';
       return { contents: [{ uri, mimeType: 'text/markdown', text: content }] };
     }
     case 'gep://genes': {

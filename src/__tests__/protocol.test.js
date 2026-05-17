@@ -283,3 +283,17 @@ describe('skill md conversion', () => {
     expect(sanitizeTags(null)).toEqual([]);
   });
 });
+
+describe('@evomap/gep-sdk lockstep', () => {
+  it('re-exports the same SCHEMA_VERSION / canonicalize / computeAssetId / verifyAssetId references as @evomap/gep-sdk', async () => {
+    // Guard against re-inlining duplicates of the protocol primitives in
+    // protocol.js. If someone bypasses the sdk dependency these references
+    // diverge and asset_ids start drifting silently across runtimes.
+    const sdk = await import('@evomap/gep-sdk');
+    const ours = await import('../protocol.js');
+    expect(ours.SCHEMA_VERSION).toBe(sdk.SCHEMA_VERSION);
+    expect(ours.canonicalize).toBe(sdk.canonicalize);
+    expect(ours.computeAssetId).toBe(sdk.computeAssetId);
+    expect(ours.verifyAssetId).toBe(sdk.verifyAssetId);
+  });
+});
