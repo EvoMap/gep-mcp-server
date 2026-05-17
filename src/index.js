@@ -20,6 +20,12 @@ import { GepRuntime } from './runtime.js';
 import { RemoteRuntime } from './remote.js';
 import { annotateSearchPayload } from './searchEnrich.js';
 
+// Single source of truth for the version string we advertise to MCP
+// clients. Reading from package.json prevents the bump-package-but-
+// forget-to-bump-Server-constructor drift Bugbot caught on PR #7.
+const PKG = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf8'));
+const SERVER_VERSION = PKG.version;
+
 const ASSETS_DIR = process.env.GEP_ASSETS_DIR || resolve(process.cwd(), 'assets/gep');
 const MEMORY_DIR = process.env.GEP_MEMORY_DIR || resolve(process.cwd(), 'memory/evolution');
 const HUB_URL = process.env.EVOMAP_HUB_URL || 'https://evomap.ai';
@@ -41,7 +47,7 @@ const runtime = IS_REMOTE
   : new GepRuntime({ assetsDir: ASSETS_DIR, memoryDir: MEMORY_DIR });
 
 const server = new Server(
-  { name: 'gep-mcp-server', version: '1.4.0' },
+  { name: 'gep-mcp-server', version: SERVER_VERSION },
   { capabilities: { tools: {}, resources: {} } }
 );
 
