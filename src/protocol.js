@@ -1,61 +1,27 @@
 // GEP protocol primitives shared between local and remote runtimes.
 //
-// These helpers are intentionally dependency-free so they can run inside the
-// MCP server (no Node-only crypto outside what ships with Node 18+) and also
-// be unit-tested without spinning up the full Hub.
+// SCHEMA_VERSION, canonicalize, computeAssetId, and verifyAssetId are
+// re-exported from `@evomap/gep-sdk` (the GEP protocol single source of
+// truth). They live there so this MCP server, evolver, and any future
+// implementation cannot drift on `asset_id` computation. If you find
+// yourself wanting to inline a copy of canonicalize() here again, stop:
+// upgrade `@evomap/gep-sdk` instead.
 //
-// Schema/protocol versions tracked here MUST stay in lockstep with
-// evolver-private-dev: bumping SCHEMA_VERSION here without a matching
-// Hub deployment will fail validation on the receiving side.
+// MCP-specific helpers (validateGene, validateCapsule, buildValidationReport,
+// geneToSkillMd, ...) stay here because they encode Hub-side gates and
+// presentation logic that aren't part of the protocol surface.
 
-import { createHash } from 'node:crypto';
+import {
+  SCHEMA_VERSION,
+  canonicalize,
+  computeAssetId,
+  verifyAssetId,
+} from '@evomap/gep-sdk';
 
-// Bump MINOR for additive fields; MAJOR for breaking changes.
-// Mirrors evolver-private-dev/src/gep/contentHash.js.
-export const SCHEMA_VERSION = '1.6.0';
+export { SCHEMA_VERSION, canonicalize, computeAssetId, verifyAssetId };
+
 export const PROTOCOL_NAME = 'gep-a2a';
 export const PROTOCOL_VERSION = '1.0.0';
-
-// Canonical JSON: deterministic serialization with sorted keys at all levels.
-// Arrays preserve order; non-finite numbers and undefined become null.
-// MUST match evolver canonicalize() byte-for-byte so asset_ids dedupe across
-// runtimes.
-export function canonicalize(obj) {
-  if (obj === null || obj === undefined) return 'null';
-  if (typeof obj === 'boolean') return obj ? 'true' : 'false';
-  if (typeof obj === 'number') {
-    if (!Number.isFinite(obj)) return 'null';
-    return String(obj);
-  }
-  if (typeof obj === 'string') return JSON.stringify(obj);
-  if (Array.isArray(obj)) {
-    return '[' + obj.map(canonicalize).join(',') + ']';
-  }
-  if (typeof obj === 'object') {
-    const keys = Object.keys(obj).sort();
-    const pairs = [];
-    for (const k of keys) {
-      pairs.push(JSON.stringify(k) + ':' + canonicalize(obj[k]));
-    }
-    return '{' + pairs.join(',') + '}';
-  }
-  return 'null';
-}
-
-// Compute a content-addressable asset ID. Excludes self-referential fields
-// (asset_id itself) from the hash input. Returns "sha256:<hex>".
-export function computeAssetId(obj, excludeFields) {
-  if (!obj || typeof obj !== 'object') return null;
-  const exclude = new Set(Array.isArray(excludeFields) ? excludeFields : ['asset_id']);
-  const clean = {};
-  for (const k of Object.keys(obj)) {
-    if (exclude.has(k)) continue;
-    clean[k] = obj[k];
-  }
-  const canonical = canonicalize(clean);
-  const hash = createHash('sha256').update(canonical, 'utf8').digest('hex');
-  return 'sha256:' + hash;
-}
 
 export function generateMessageId() {
   return 'msg_' + Date.now() + '_' + Math.random().toString(16).slice(2, 10);
