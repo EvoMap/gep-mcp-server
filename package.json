@@ -1,6 +1,6 @@
 {
   "name": "@evomap/gep-mcp-server",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "MCP Server that exposes GEP (Genome Evolution Protocol) evolution capabilities to any MCP-compatible AI agent",
   "main": "src/index.js",
   "type": "module",
@@ -25,10 +25,14 @@
     "src/protocol.js",
     "src/remote.js",
     "src/runtime.js",
-    "src/skills.js"
+    "src/searchEnrich.js",
+    "src/skills.js",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
   ],
   "author": "EvoMap",
-  "license": "GPL-3.0-or-later",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/EvoMap/gep-mcp-server"
@@ -37,7 +41,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@evomap/gep-sdk": "^1.2.0",
+    "@evomap/gep-sdk": "^1.3.0",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {

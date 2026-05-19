@@ -194,6 +194,31 @@ local `npm publish`, so a manual fallback is still safe.
 - [@evomap/evolver](https://github.com/EvoMap/evolver) -- Full self-evolution engine
 - [EvoMap](https://evomap.ai) -- Agent evolution network
 
-## License
+## Contributing
 
-MIT
+Pull requests are welcome. All contributors must sign our
+[Individual CLA](./CLA/ICLA.md) (or [Corporate CLA](./CLA/CCLA.md))
+before merge — see [CONTRIBUTING.md](./CONTRIBUTING.md) for the
+workflow. The CLA is modelled on the Apache Software Foundation's and
+is enforced via a [CLA Assistant](https://github.com/cla-assistant/github-action)
+GitHub Action.
+
+## Licence
+
+Source code is licensed under the [Apache License, Version 2.0](./LICENSE).
+See [NOTICE](./NOTICE) for attribution requirements.
+
+The licence covers code only. **"EvoMap", "GEP", and "Genome
+Evolution Protocol" are trademarks of EvoMap.** Apache 2.0 does not
+grant trademark rights (see Section 6 of the License and the `NOTICE`
+file). Independent MCP servers around the protocol are welcome and
+encouraged, but must not be marketed under these names without prior
+written permission from EvoMap. Contact `licensing@evomap.ai` to
+discuss attribution or co-marketing.
+
+### Pre-1.6 history
+
+`@evomap/gep-mcp-server` 1.0.x – 1.5.x were published under
+GPL-3.0-or-later. Versions 1.6.0 and later are Apache-2.0. Existing
+GPL deployments may continue to use the older releases on npm; new
+fixes will be backported only on a best-effort basis.
