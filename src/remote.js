@@ -28,6 +28,7 @@ import {
   validateValidationReport,
 } from './protocol.js';
 import { SkillsService, defaultBundledRoot, defaultLocalRoot, clampPositive } from './skills.js';
+import { applyCostThresholds } from './recallCostFilter.js';
 
 const DEFAULT_HUB_URL = 'https://evomap.ai';
 const TIMEOUT_MS = 15000;
@@ -218,14 +219,15 @@ export class RemoteRuntime {
   }
 
   async recall(args) {
-    const { query, signals, limit } = args || {};
+    const { query, signals, limit, max_cost_tokens, max_cost_usd } = args || {};
     const effectiveLimit = Math.min(Math.max(1, parseInt(limit, 10) || 10), 50);
-    return this._request('POST', '/a2a/memory/recall', {
+    const response = await this._request('POST', '/a2a/memory/recall', {
       node_id: this.nodeId,
       query,
       signals,
       limit: effectiveLimit,
     });
+    return applyCostThresholds(response, { max_cost_tokens, max_cost_usd });
   }
 
   async recordOutcome(args) {
