@@ -22,7 +22,7 @@ describe('protocol primitives', () => {
     // Bump these together with evolver-private-dev/src/gep/contentHash.js
     // and a2aProtocol.js. If the Hub is on a newer version this assertion
     // is the canary.
-    expect(SCHEMA_VERSION).toBe('1.6.0');
+    expect(SCHEMA_VERSION).toBe('1.7.0');
     expect(PROTOCOL_NAME).toBe('gep-a2a');
     expect(PROTOCOL_VERSION).toBe('1.0.0');
   });
@@ -45,7 +45,7 @@ describe('protocol primitives', () => {
   it('stampAsset adds asset_id and schema_version idempotently', () => {
     const g = { type: 'Gene', id: 'g1' };
     stampAsset(g);
-    expect(g.schema_version).toBe('1.6.0');
+    expect(g.schema_version).toBe('1.7.0');
     expect(g.asset_id).toMatch(/^sha256:/);
     const previousId = g.asset_id;
     // Stamping again with same content yields same id
@@ -201,7 +201,7 @@ describe('buildValidationReport', () => {
     expect(r.commands).toHaveLength(2);
     expect(r.commands[1].stderr).toBe('lint failed');
     expect(r.asset_id).toMatch(/^sha256:/);
-    expect(r.schema_version).toBe('1.6.0');
+    expect(r.schema_version).toBe('1.7.0');
   });
 
   it('falls back to commands derived from results when commands omitted', () => {
@@ -272,7 +272,7 @@ describe('skill md conversion', () => {
     expect(md).toContain('- `log_error`');
     expect(md).toContain('## Strategy');
     expect(md).toContain('## Validation');
-    expect(md).toContain('Schema version: `1.6.0`');
+    expect(md).toContain('Schema version: `1.7.0`');
   });
 
   it('sanitizeTags drops short / pure-numeric / timestamp-bearing entries', () => {

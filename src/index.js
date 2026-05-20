@@ -104,6 +104,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'number',
             description: 'Max results to return (default 10, max 50)',
           },
+          max_cost_tokens: {
+            type: 'number',
+            minimum: 0,
+            description: 'Optional: drop matches whose capsule reports cost_tokens above this threshold. Matches without recorded cost are kept (treated as unknown, not unbounded).',
+          },
+          max_cost_usd: {
+            type: 'number',
+            minimum: 0,
+            description: 'Optional: drop matches whose capsule reports cost_usd above this threshold. Matches without recorded cost are kept (treated as unknown, not unbounded).',
+          },
         },
         required: ['query'],
       },
