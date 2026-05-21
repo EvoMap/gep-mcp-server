@@ -116,66 +116,43 @@ describe('RemoteRuntime._request retry logic', () => {
   });
 });
 
-describe('RemoteRuntime.recall cost-threshold post-filter', () => {
-  // Phase 2 (Hub side, queued with cloudcarver) is expected to attach
-  // cost_tokens / cost_usd to each match in the /a2a/memory/recall response.
-  // Until that lands, these tests double as the contract spec for what
-  // the mcp-server will do when those fields show up.
-  function recallResponse(matches) {
-    return buildResponse({ ok: true, status: 200, body: { matches } });
-  }
-
-  it('drops matches whose cost_tokens exceed max_cost_tokens', async () => {
-    const fetchImpl = vi.fn(async () => recallResponse([
-      { gene_id: 'cheap', cost_tokens: 500 },
-      { gene_id: 'pricey', cost_tokens: 5000 },
-    ]));
-    const runtime = buildRuntime({ fetchImpl });
-    const result = await runtime.recall({ query: 'x', max_cost_tokens: 1000 });
-    expect(result.matches.map(m => m.gene_id)).toEqual(['cheap']);
-  });
-
-  it('keeps matches whose cost_tokens is missing (unknown != unbounded)', async () => {
-    const fetchImpl = vi.fn(async () => recallResponse([
-      { gene_id: 'legacy' },
-      { gene_id: 'cheap', cost_tokens: 100 },
-      { gene_id: 'pricey', cost_tokens: 10000 },
-    ]));
-    const runtime = buildRuntime({ fetchImpl });
-    const result = await runtime.recall({ query: 'x', max_cost_tokens: 1000 });
-    expect(result.matches.map(m => m.gene_id)).toEqual(['legacy', 'cheap']);
-  });
-
-  it('applies max_cost_tokens and max_cost_usd conjunctively', async () => {
-    const fetchImpl = vi.fn(async () => recallResponse([
-      { gene_id: 'both_ok', cost_tokens: 500, cost_usd: 0.01 },
-      { gene_id: 'token_fail', cost_tokens: 5000, cost_usd: 0.01 },
-      { gene_id: 'usd_fail', cost_tokens: 500, cost_usd: 1.0 },
-    ]));
-    const runtime = buildRuntime({ fetchImpl });
-    const result = await runtime.recall({
-      query: 'x',
-      max_cost_tokens: 1000,
-      max_cost_usd: 0.1,
+describe('RemoteRuntime.recall budget hint forwarding', () => {
+  it('forwards budget_tokens / budget_usd / cost_tier to the Hub body', async () => {
+    let captured;
+    const fetchImpl = vi.fn(async (_url, opts) => {
+      captured = JSON.parse(opts.body);
+      return buildResponse({ ok: true, status: 200, body: { matches: [] } });
     });
-    expect(result.matches.map(m => m.gene_id)).toEqual(['both_ok']);
+    const runtime = buildRuntime({ fetchImpl });
+    await runtime.recall({
+      query: 'x',
+      budget_tokens: 1000,
+      budget_usd: 0.5,
+      cost_tier: 'low',
+    });
+    expect(captured.budget_tokens).toBe(1000);
+    expect(captured.budget_usd).toBe(0.5);
+    expect(captured.cost_tier).toBe('low');
   });
 
-  it('returns the Hub response unchanged when no threshold args are given', async () => {
+  it('omits budget fields when not supplied', async () => {
+    let captured;
+    const fetchImpl = vi.fn(async (_url, opts) => {
+      captured = JSON.parse(opts.body);
+      return buildResponse({ ok: true, status: 200, body: { matches: [] } });
+    });
+    const runtime = buildRuntime({ fetchImpl });
+    await runtime.recall({ query: 'x' });
+    expect(captured.budget_tokens).toBeUndefined();
+    expect(captured.budget_usd).toBeUndefined();
+    expect(captured.cost_tier).toBeUndefined();
+  });
+
+  it('returns the Hub response unchanged', async () => {
     const body = { matches: [{ gene_id: 'a', cost_tokens: 99999 }], extra: 'pass-through' };
     const fetchImpl = vi.fn(async () => buildResponse({ ok: true, status: 200, body }));
     const runtime = buildRuntime({ fetchImpl });
     const result = await runtime.recall({ query: 'x' });
     expect(result).toEqual(body);
-  });
-
-  it('accepts max_cost_usd as a float threshold', async () => {
-    const fetchImpl = vi.fn(async () => recallResponse([
-      { gene_id: 'cheap', cost_usd: 0.0234 },
-      { gene_id: 'pricey', cost_usd: 0.5 },
-    ]));
-    const runtime = buildRuntime({ fetchImpl });
-    const result = await runtime.recall({ query: 'x', max_cost_usd: 0.1 });
-    expect(result.matches.map(m => m.gene_id)).toEqual(['cheap']);
   });
 });

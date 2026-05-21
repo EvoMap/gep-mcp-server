@@ -28,7 +28,6 @@ import {
   validateValidationReport,
 } from './protocol.js';
 import { SkillsService, defaultBundledRoot, defaultLocalRoot, clampPositive } from './skills.js';
-import { applyCostThresholds } from './recallCostFilter.js';
 
 const DEFAULT_HUB_URL = 'https://evomap.ai';
 const TIMEOUT_MS = 15000;
@@ -221,16 +220,12 @@ export class RemoteRuntime {
   async recall(args) {
     const {
       query, signals, limit,
-      max_cost_tokens, max_cost_usd,
       budget_tokens, budget_usd, cost_tier,
     } = args || {};
     const effectiveLimit = Math.min(Math.max(1, parseInt(limit, 10) || 10), 50);
     // Schema 1.7.0: forward budget hints to the Hub so it can down-rank
     // expensive matches server-side. Older Hubs ignore unknown JSON
-    // fields, so this is forward-compatible. We then run the client-side
-    // post-filter (`applyCostThresholds`) on whatever the Hub returns —
-    // the two are complementary: budget_* is a ranking hint, max_cost_*
-    // is a hard drop.
+    // fields, so this is forward-compatible.
     const body = {
       node_id: this.nodeId,
       query,
@@ -240,8 +235,7 @@ export class RemoteRuntime {
     if (budget_tokens !== undefined && budget_tokens !== null) body.budget_tokens = budget_tokens;
     if (budget_usd !== undefined && budget_usd !== null) body.budget_usd = budget_usd;
     if (cost_tier !== undefined && cost_tier !== null) body.cost_tier = cost_tier;
-    const response = await this._request('POST', '/a2a/memory/recall', body);
-    return applyCostThresholds(response, { max_cost_tokens, max_cost_usd });
+    return this._request('POST', '/a2a/memory/recall', body);
   }
 
   async recordOutcome(args) {
