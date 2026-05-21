@@ -9,6 +9,7 @@ import {
   validateGene,
   validateCapsule,
 } from './protocol.js';
+import { SkillsService, defaultBundledRoot, defaultLocalRoot } from './skills.js';
 
 export { SCHEMA_VERSION };
 
@@ -21,7 +22,16 @@ export class GepRuntime {
     mkdirSync(assetsDir, { recursive: true });
     mkdirSync(memoryDir, { recursive: true });
     this.store.ensureFiles();
+    this.skills = new SkillsService({
+      bundledRoot: defaultBundledRoot(assetsDir),
+      localRoot: defaultLocalRoot(),
+      hubFetch: null,
+      isRemote: false,
+    });
   }
+
+  listSkills(args) { return this.skills.listSkills(args || {}); }
+  loadSkill(args) { return this.skills.loadSkill(args || {}); }
 
   evolve(args) {
     const { context, intent } = args || {};

@@ -19,10 +19,9 @@ import {
 
 describe('protocol primitives', () => {
   it('exports current schema and protocol versions in lockstep with evolver', () => {
-    // Bump these together with evolver-private-dev/src/gep/contentHash.js
-    // and a2aProtocol.js. If the Hub is on a newer version this assertion
-    // is the canary.
-    expect(SCHEMA_VERSION).toBe('1.6.0');
+    // Canary: bump this together with evolver-private-dev/src/gep/contentHash.js
+    // and a2aProtocol.js whenever @evomap/gep-sdk ships a new SCHEMA_VERSION.
+    expect(SCHEMA_VERSION).toBe('1.7.0');
     expect(PROTOCOL_NAME).toBe('gep-a2a');
     expect(PROTOCOL_VERSION).toBe('1.0.0');
   });
@@ -45,7 +44,7 @@ describe('protocol primitives', () => {
   it('stampAsset adds asset_id and schema_version idempotently', () => {
     const g = { type: 'Gene', id: 'g1' };
     stampAsset(g);
-    expect(g.schema_version).toBe('1.6.0');
+    expect(g.schema_version).toBe(SCHEMA_VERSION);
     expect(g.asset_id).toMatch(/^sha256:/);
     const previousId = g.asset_id;
     // Stamping again with same content yields same id
@@ -201,7 +200,7 @@ describe('buildValidationReport', () => {
     expect(r.commands).toHaveLength(2);
     expect(r.commands[1].stderr).toBe('lint failed');
     expect(r.asset_id).toMatch(/^sha256:/);
-    expect(r.schema_version).toBe('1.6.0');
+    expect(r.schema_version).toBe(SCHEMA_VERSION);
   });
 
   it('falls back to commands derived from results when commands omitted', () => {
@@ -272,7 +271,7 @@ describe('skill md conversion', () => {
     expect(md).toContain('- `log_error`');
     expect(md).toContain('## Strategy');
     expect(md).toContain('## Validation');
-    expect(md).toContain('Schema version: `1.6.0`');
+    expect(md).toContain(`Schema version: \`${SCHEMA_VERSION}\``);
   });
 
   it('sanitizeTags drops short / pure-numeric / timestamp-bearing entries', () => {
@@ -281,5 +280,19 @@ describe('skill md conversion', () => {
       'test_failure',
     ]);
     expect(sanitizeTags(null)).toEqual([]);
+  });
+});
+
+describe('@evomap/gep-sdk lockstep', () => {
+  it('re-exports the same SCHEMA_VERSION / canonicalize / computeAssetId / verifyAssetId references as @evomap/gep-sdk', async () => {
+    // Guard against re-inlining duplicates of the protocol primitives in
+    // protocol.js. If someone bypasses the sdk dependency these references
+    // diverge and asset_ids start drifting silently across runtimes.
+    const sdk = await import('@evomap/gep-sdk');
+    const ours = await import('../protocol.js');
+    expect(ours.SCHEMA_VERSION).toBe(sdk.SCHEMA_VERSION);
+    expect(ours.canonicalize).toBe(sdk.canonicalize);
+    expect(ours.computeAssetId).toBe(sdk.computeAssetId);
+    expect(ours.verifyAssetId).toBe(sdk.verifyAssetId);
   });
 });

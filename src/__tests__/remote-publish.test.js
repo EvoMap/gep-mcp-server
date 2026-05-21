@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { RemoteRuntime } from '../remote.js';
+import { SCHEMA_VERSION } from '../protocol.js';
 
 function buildResponse({ ok = true, status = 200, body = {}, text = '' } = {}) {
   const headers = new Map();
@@ -115,7 +116,7 @@ describe('publishBundle', () => {
     expect(Array.isArray(body.payload.assets)).toBe(true);
     expect(body.payload.assets).toHaveLength(2);
     expect(body.payload.assets[0].asset_id).toMatch(/^sha256:/);
-    expect(body.payload.assets[0].schema_version).toBe('1.6.0');
+    expect(body.payload.assets[0].schema_version).toBe(SCHEMA_VERSION);
     expect(r.gene_asset_id).toMatch(/^sha256:/);
     expect(r.capsule_asset_id).toMatch(/^sha256:/);
   });
@@ -295,7 +296,7 @@ describe('getProtocolInfo', () => {
   it('reports schema/protocol versions for compatibility checks', () => {
     const runtime = buildRuntime({ fetchImpl: vi.fn() });
     const info = runtime.getProtocolInfo();
-    expect(info.schema_version).toBe('1.6.0');
+    expect(info.schema_version).toBe(SCHEMA_VERSION);
     expect(info.protocol_name).toBe('gep-a2a');
     expect(info.mode).toBe('remote');
     expect(info.node_id).toBe('node_test');

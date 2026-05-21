@@ -12,11 +12,19 @@ import {
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const requireFromHere = createRequire(import.meta.url);
 import { GepRuntime } from './runtime.js';
 import { RemoteRuntime } from './remote.js';
 import { annotateSearchPayload } from './searchEnrich.js';
+
+// Single source of truth for the version string we advertise to MCP
+// clients. Reading from package.json prevents the bump-package-but-
+// forget-to-bump-Server-constructor drift Bugbot caught on PR #7.
+const PKG = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf8'));
+const SERVER_VERSION = PKG.version;
 
 const ASSETS_DIR = process.env.GEP_ASSETS_DIR || resolve(process.cwd(), 'assets/gep');
 const MEMORY_DIR = process.env.GEP_MEMORY_DIR || resolve(process.cwd(), 'memory/evolution');
@@ -39,7 +47,7 @@ const runtime = IS_REMOTE
   : new GepRuntime({ assetsDir: ASSETS_DIR, memoryDir: MEMORY_DIR });
 
 const server = new Server(
-  { name: 'gep-mcp-server', version: '1.4.0' },
+  { name: 'gep-mcp-server', version: SERVER_VERSION },
   { capabilities: { tools: {}, resources: {} } }
 );
 
@@ -145,6 +153,63 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
         },
         required: ['gene'],
+      },
+    },
+    {
+      name: 'gep_list_skill',
+      description: 'List skills available across bundled (shipped with evolver), local (~/.claude/skills/), and hub (community) sources. Use this before gep_load_skill to discover what is available. The bootstrap _meta skill is hidden by default; pass a query to surface it.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          source: {
+            type: 'string',
+            enum: ['bundled', 'local', 'hub', 'all'],
+            description: 'Which source to list. Defaults to "all".',
+          },
+          query: {
+            type: 'string',
+            description: 'Optional substring filter applied to name / description / tags',
+          },
+          limit: {
+            type: 'number',
+            description: 'Max results (default 50, max 200)',
+          },
+        },
+      },
+    },
+    {
+      name: 'gep_load_skill',
+      description: 'Fetch a skill\'s SKILL.md content. Default returns the markdown as a tool result so you can apply it for the current turn. Pass install:true (local mode only) to copy the skill directory into ~/.claude/skills/<name>/ for native Claude Code Skill use across sessions. Resolution priority is local > bundled > hub; disambiguate collisions with "<source>:<name>".',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Skill name. Use "bundled:<name>", "local:<name>", or "hub:<name>" to force a source.',
+          },
+          source: {
+            type: 'string',
+            enum: ['bundled', 'local', 'hub'],
+            description: 'Optional explicit source. Overrides the prefix syntax in name.',
+          },
+          version: {
+            type: 'string',
+            description: 'Optional version pin (hub source only).',
+          },
+          install: {
+            type: 'boolean',
+            description: 'If true, copy to ~/.claude/skills/<name>/ instead of returning content. Local mode only.',
+          },
+          force: {
+            type: 'boolean',
+            description: 'When install:true, overwrite an existing local skill of the same name.',
+          },
+          maxBytes: {
+            type: 'number',
+            description: 'Truncation cap for returned content (default 64000). Skills larger than this are truncated; pass install:true to access the full file.',
+          },
+        },
+        required: ['name'],
       },
     },
     {
@@ -305,6 +370,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (IS_REMOTE) return { content: [{ type: 'text', text: JSON.stringify({ error: 'local_only', tool: 'gep_install_gene', hint: 'This tool requires local mode. Set ASSETS_DIR and MEMORY_DIR instead of EVOMAP_API_KEY.' }) }], isError: true };
         return { content: [{ type: 'text', text: JSON.stringify(runtime.installGene(args), null, 2) }] };
       }
+      case 'gep_list_skill':
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.listSkills(args), null, 2) }] };
+      case 'gep_load_skill': {
+        if (IS_REMOTE && args?.install) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'local_only', tool: 'gep_load_skill', hint: 'install:true requires local mode. Set ASSETS_DIR and MEMORY_DIR instead of EVOMAP_API_KEY, or call without install:true to receive the skill content as a tool result.' }) }], isError: true };
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.loadSkill(args), null, 2) }] };
+      }
       case 'gep_export': {
         if (IS_REMOTE) return { content: [{ type: 'text', text: JSON.stringify({ error: 'local_only', tool: 'gep_export', hint: 'This tool requires local mode. Set ASSETS_DIR and MEMORY_DIR instead of EVOMAP_API_KEY.' }) }], isError: true };
         return { content: [{ type: 'text', text: JSON.stringify(runtime.exportEvolution(args), null, 2) }] };
@@ -386,14 +459,24 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const { uri } = request.params;
   switch (uri) {
     case 'gep://spec': {
-      const candidates = [
-        resolve(ASSETS_DIR, 'gep-spec-v1.md'),
-        resolve(__dirname, '../../gep-protocol/spec/gep-spec-v1.md'),
-      ];
-      const specPath = candidates.find(p => existsSync(p));
+      // Resolve from the @evomap/gep-sdk package (the GEP single source of
+      // truth) as the primary path; fall back to a user-supplied
+      // GEP_ASSETS_DIR copy if someone wants to pin an older spec for
+      // reproducibility.
+      let specPath = null;
+      try {
+        specPath = requireFromHere.resolve('@evomap/gep-sdk/spec/gep-spec-v1.md');
+      } catch (_err) {
+        // npm subpath export not resolvable in this layout; fall through to
+        // the GEP_ASSETS_DIR lookup so the resource still works.
+      }
+      if (!specPath || !existsSync(specPath)) {
+        const userPath = resolve(ASSETS_DIR, 'gep-spec-v1.md');
+        specPath = existsSync(userPath) ? userPath : null;
+      }
       const content = specPath
         ? readFileSync(specPath, 'utf8')
-        : 'GEP spec not found. Place gep-spec-v1.md in your GEP_ASSETS_DIR or install gep-protocol alongside this package.';
+        : 'GEP spec not found. Reinstall this package (it depends on @evomap/gep-sdk which ships the spec), or place gep-spec-v1.md in your GEP_ASSETS_DIR.';
       return { contents: [{ uri, mimeType: 'text/markdown', text: content }] };
     }
     case 'gep://genes': {
