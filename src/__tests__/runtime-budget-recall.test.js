@@ -14,6 +14,7 @@ import {
   isOverBudget,
   serializeBudgetApplied,
 } from '../runtime.js';
+import { GEP_GENE_CATEGORIES } from '@evomap/gep-sdk';
 
 let runtime;
 let tmp;
@@ -205,6 +206,49 @@ describe('GepRuntime.recall budget integration', () => {
       cost_tier: 'low',
     });
     expect(result.matches[0].over_budget).toBe(true);
+  });
+});
+
+describe('GepRuntime category constants integration', () => {
+  it('reports every SDK Gene category in status stats', () => {
+    runtime.installGene({
+      gene: {
+        type: 'Gene',
+        id: 'gene_explore_sparse_niche',
+        category: 'explore',
+        signals_match: ['stable_success_plateau'],
+        summary: 'Explore sparse strategy niches before selecting a concrete optimization path.',
+        strategy: ['Inspect recent memory graph gaps', 'Draft a bounded exploration plan'],
+        validation: ['node -e "process.exit(0)"'],
+      },
+    });
+
+    const status = runtime.getStatus();
+    expect(Object.keys(status.gene_categories)).toEqual(GEP_GENE_CATEGORIES);
+    expect(status.gene_categories.explore).toBe(1);
+  });
+
+  it('accepts explore as a forced evolution intent', () => {
+    runtime.installGene({
+      gene: {
+        type: 'Gene',
+        id: 'gene_explore_plateau',
+        category: 'explore',
+        signals_match: ['stable_success_plateau'],
+        summary: 'Explore alternatives when repeated stable cycles stop producing useful improvements.',
+        strategy: ['Identify plateau evidence', 'Search for a new strategy direction'],
+        validation: ['node -e "process.exit(0)"'],
+      },
+    });
+
+    const result = runtime.evolve({
+      context: 'No active error, but recent cycles are saturated.',
+      intent: 'explore',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.mutation.category).toBe('explore');
+    expect(result.mutation.expected_effect).toMatch(/discover new strategy opportunities/);
   });
 });
 

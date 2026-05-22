@@ -26,6 +26,10 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import {
+  GEP_GENE_CATEGORIES,
+  GEP_OUTCOME_STATUSES,
+} from '@evomap/gep-sdk';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const requireFromHere = createRequire(import.meta.url);
@@ -78,7 +82,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           intent: {
             type: 'string',
-            enum: ['repair', 'optimize', 'innovate'],
+            enum: GEP_GENE_CATEGORIES,
             description: 'Optional: force a specific evolution intent. If omitted, the system infers from signals.',
           },
         },
@@ -140,7 +144,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           status: {
             type: 'string',
-            enum: ['success', 'failed'],
+            enum: GEP_OUTCOME_STATUSES,
             description: 'Whether the task was successful',
           },
           score: {
@@ -173,7 +177,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           category: {
             type: 'string',
-            enum: ['repair', 'optimize', 'innovate'],
+            enum: GEP_GENE_CATEGORIES,
             description: 'Optional: filter by category',
           },
         },
@@ -290,7 +294,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           outcome: {
             type: 'string',
-            enum: ['success', 'failed'],
+            enum: GEP_OUTCOME_STATUSES,
             description: 'Optional: filter by outcome status',
           },
           limit: {
@@ -433,7 +437,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const params = new URLSearchParams();
           params.set('q', args.query.trim().slice(0, 500));
           if (args.type && ['Gene', 'Capsule'].includes(args.type)) params.set('type', args.type);
-          if (args.outcome && ['success', 'failed'].includes(args.outcome)) params.set('outcome', args.outcome);
+          if (args.outcome && GEP_OUTCOME_STATUSES.includes(args.outcome)) params.set('outcome', args.outcome);
           params.set('limit', String(Math.min(Math.max(1, parseInt(args.limit, 10) || 10), 50)));
           params.set('include_context', 'true');
           const url = `${HUB_URL}/a2a/assets/semantic-search?${params.toString()}`;

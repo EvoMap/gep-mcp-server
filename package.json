@@ -41,7 +41,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@evomap/gep-sdk": "^1.4.0",
+    "@evomap/gep-sdk": "https://github.com/EvoMap/gep-sdk-js/archive/6a387bbe32bf623ef04f304ac3d8c4ef0095e722.tar.gz",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {

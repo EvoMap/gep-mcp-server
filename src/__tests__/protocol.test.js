@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   SCHEMA_VERSION,
+  GEP_GENE_CATEGORIES,
+  GEP_OUTCOME_STATUSES,
   PROTOCOL_NAME,
   PROTOCOL_VERSION,
   buildExecutionTrace,
@@ -25,6 +27,14 @@ describe('protocol primitives', () => {
     expect(SCHEMA_VERSION).toBe('1.7.0');
     expect(PROTOCOL_NAME).toBe('gep-a2a');
     expect(PROTOCOL_VERSION).toBe('1.0.0');
+  });
+
+  it('re-exports protocol constants from @evomap/gep-sdk', async () => {
+    const sdk = await import('@evomap/gep-sdk');
+    expect(GEP_GENE_CATEGORIES).toEqual(sdk.GEP_GENE_CATEGORIES);
+    expect(GEP_OUTCOME_STATUSES).toEqual(sdk.GEP_OUTCOME_STATUSES);
+    expect(GEP_GENE_CATEGORIES).toContain('explore');
+    expect(GEP_OUTCOME_STATUSES).toEqual(['success', 'failed']);
   });
 
   it('canonicalize sorts object keys deterministically', () => {

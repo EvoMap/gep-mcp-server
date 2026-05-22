@@ -18,6 +18,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, ren
 import { createHash } from 'node:crypto';
 import {
   SCHEMA_VERSION,
+  GEP_GENE_CATEGORIES,
   buildValidationReport as protoBuildValidationReport,
   geneToSkillMd as protoGeneToSkillMd,
   validateGene,
@@ -56,6 +57,7 @@ export class GepRuntime {
         repair: 'log_error',
         innovate: 'stable_success_plateau',
         optimize: 'user_improvement_suggestion',
+        explore: 'stable_success_plateau',
       };
       if (intentSignalMap[intent] && !signals.includes(intentSignalMap[intent])) {
         signals.unshift(intentSignalMap[intent]);
@@ -397,9 +399,10 @@ export class GepRuntime {
       },
       recent_events: recentEvents,
       gene_categories: {
-        repair: genes.filter(g => g.category === 'repair').length,
-        optimize: genes.filter(g => g.category === 'optimize').length,
-        innovate: genes.filter(g => g.category === 'innovate').length,
+        ...Object.fromEntries(GEP_GENE_CATEGORIES.map((category) => [
+          category,
+          genes.filter((g) => g.category === category).length,
+        ])),
       },
     };
   }
@@ -498,7 +501,7 @@ export class GepRuntime {
   }
 
   _inferCategory(signals, forceIntent) {
-    if (forceIntent && ['repair', 'optimize', 'innovate'].includes(forceIntent)) return forceIntent;
+    if (forceIntent && GEP_GENE_CATEGORIES.includes(forceIntent)) return forceIntent;
     if (signals.some(s => s === 'log_error' || s.startsWith('errsig:'))) return 'repair';
     const oppSignals = ['user_feature_request', 'capability_gap', 'stable_success_plateau', 'force_innovation_after_repair_loop'];
     if (signals.some(s => oppSignals.includes(s))) return 'innovate';
@@ -508,6 +511,7 @@ export class GepRuntime {
   _effectFromCategory(cat) {
     if (cat === 'repair') return 'reduce runtime errors, increase stability';
     if (cat === 'innovate') return 'explore new strategy combinations';
+    if (cat === 'explore') return 'discover new strategy opportunities in sparse or saturated niches';
     return 'improve success rate and efficiency';
   }
 
