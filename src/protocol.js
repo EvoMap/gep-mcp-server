@@ -90,8 +90,14 @@ export function validateGene(gene) {
   }
   if (gene.type !== 'Gene') errors.push('gene.type must be "Gene"');
   if (!gene.id || typeof gene.id !== 'string') errors.push('gene.id is required');
-  if (!gene.category || !['repair', 'optimize', 'innovate'].includes(gene.category)) {
-    errors.push('gene.category must be repair|optimize|innovate');
+  // Canonical Gene category enum for schema 1.7. The Hub additionally
+  // accepts `regulatory` for its internal organism/regulatory-network
+  // gating, but Evolver does not produce regulatory Genes and MCP
+  // clients should not publish them, so we keep the public surface to
+  // the four cells that move through the evolver -> MCP -> Hub
+  // pipeline. See gep-sdk schemas and evolver/src/gep/schemas/gene.js.
+  if (!gene.category || !['repair', 'optimize', 'innovate', 'explore'].includes(gene.category)) {
+    errors.push('gene.category must be repair|optimize|innovate|explore');
   }
   if (!Array.isArray(gene.signals_match) || gene.signals_match.length === 0) {
     errors.push('gene.signals_match must be a non-empty array');

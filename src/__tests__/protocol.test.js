@@ -104,6 +104,19 @@ describe('validation', () => {
     expect(validateGene(validGene)).toEqual([]);
   });
 
+  // Issue #13: explore is part of the canonical schema-1.7 Gene category
+  // enum. Evolver emits explore Genes via signals.js / mutation.js, and
+  // the Hub's a2a.js publishRequestSchema already accepts explore -- MCP
+  // was the only consumer narrower than the deployed contract.
+  it('accepts Gene with category=explore (canonical schema 1.7 enum)', () => {
+    expect(validateGene({ ...validGene, category: 'explore' })).toEqual([]);
+  });
+
+  it('rejects Gene with category=regulatory (Hub-only, not part of MCP surface)', () => {
+    const errs = validateGene({ ...validGene, category: 'regulatory' });
+    expect(errs.some((e) => /repair\|optimize\|innovate\|explore/.test(e))).toBe(true);
+  });
+
   it('rejects malformed Capsule (short summary)', () => {
     const errs = validateCapsule({ ...validCapsule, summary: 'short' });
     expect(errs.some((e) => /summary/.test(e))).toBe(true);
