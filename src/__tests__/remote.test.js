@@ -156,3 +156,35 @@ describe('RemoteRuntime.recall budget hint forwarding', () => {
     expect(result).toEqual(body);
   });
 });
+
+describe('RemoteRuntime.recordOutcome attribution passthrough', () => {
+  function capturingRuntime() {
+    const calls = [];
+    const fetchImpl = vi.fn(async (url, opts) => {
+      calls.push(JSON.parse(opts.body));
+      return buildResponse({ ok: true, status: 200, body: { ok: true, recorded: 'r1' } });
+    });
+    return { runtime: buildRuntime({ fetchImpl }), calls };
+  }
+
+  it('includes used_asset_ids in the record body when provided', async () => {
+    const { runtime, calls } = capturingRuntime();
+    await runtime.recordOutcome({
+      geneId: 'ad_hoc', status: 'success', signals: ['log_error'], summary: 's',
+      used_asset_ids: ['sha256:aaa', 'sha256:bbb'],
+    });
+    expect(calls[0].used_asset_ids).toEqual(['sha256:aaa', 'sha256:bbb']);
+  });
+
+  it('omits used_asset_ids entirely when absent (byte-compatible with older agents)', async () => {
+    const { runtime, calls } = capturingRuntime();
+    await runtime.recordOutcome({ geneId: 'ad_hoc', status: 'success', signals: ['log_error'], summary: 's' });
+    expect('used_asset_ids' in calls[0]).toBe(false);
+  });
+
+  it('omits used_asset_ids when an empty array is passed', async () => {
+    const { runtime, calls } = capturingRuntime();
+    await runtime.recordOutcome({ geneId: 'ad_hoc', status: 'success', signals: ['x'], summary: 's', used_asset_ids: [] });
+    expect('used_asset_ids' in calls[0]).toBe(false);
+  });
+});

@@ -239,7 +239,7 @@ export class RemoteRuntime {
   }
 
   async recordOutcome(args) {
-    const { geneId, signals, status, score, summary, cost_tokens, cost_usd } = args || {};
+    const { geneId, signals, status, score, summary, cost_tokens, cost_usd, used_asset_ids } = args || {};
     // Schema 1.7.0: forward cost hints to the Hub. Older Hubs ignore
     // unknown fields; newer Hubs persist them onto the capsule so a
     // future budget-aware recall can rank by cost.
@@ -253,6 +253,9 @@ export class RemoteRuntime {
     };
     if (cost_tokens !== undefined && cost_tokens !== null) body.cost_tokens = cost_tokens;
     if (cost_usd !== undefined && cost_usd !== null) body.cost_usd = cost_usd;
+    // Optional fetch->outcome attribution; omitted when the agent passes none
+    // so older agents and non-attributed calls are byte-identical.
+    if (Array.isArray(used_asset_ids) && used_asset_ids.length > 0) body.used_asset_ids = used_asset_ids;
     return this._request('POST', '/a2a/memory/record', body);
   }
 

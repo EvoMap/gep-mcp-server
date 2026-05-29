@@ -165,6 +165,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             minimum: 0,
             description: 'Optional (schema 1.7.0): approximate USD cost this task burned. Same purpose as cost_tokens but for dollar-budget callers. Omit / null when unknown.',
           },
+          used_asset_ids: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional. The asset_id(s) you actually used from a prior gep_recall/fetch to reach this outcome. Lets the network measure which recalled assets truly help. Omit if none.',
+          },
         },
         required: ['geneId', 'signals', 'status', 'score', 'summary'],
       },
