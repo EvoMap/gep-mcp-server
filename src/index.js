@@ -397,6 +397,45 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: 'Return the GEP schema and protocol versions this MCP build speaks. Use to detect protocol drift between MCP and Hub or between MCP and the parent agent.',
       inputSchema: { type: 'object', properties: {} },
     },
+    {
+      name: 'gep_build_recipe',
+      description: 'Build a recipe (a "DNA" blueprint: an ordered Gene/Capsule step sequence the Hub can express into running organisms). Steps must reference asset_ids (sha256:...) already published to the Hub. Created as a DRAFT unless publish:true is passed explicitly. Requires remote mode.',
+      inputSchema: {
+        type: 'object',
+        required: ['title', 'steps'],
+        properties: {
+          title: { type: 'string', description: 'Recipe title (>= 3 chars)' },
+          description: { type: 'string', description: 'Optional description' },
+          steps: {
+            type: 'array',
+            description: 'Ordered steps (1..20). Each: {asset_id: "sha256:...", asset_type: "Gene"|"Capsule", position?}',
+            items: {
+              type: 'object',
+              required: ['asset_id', 'asset_type'],
+              properties: {
+                asset_id: { type: 'string', description: 'sha256:<64 hex> of a Hub-registered asset' },
+                asset_type: { type: 'string', enum: ['Gene', 'Capsule'] },
+                position: { type: 'number', description: 'Optional explicit position (defaults to array order)' },
+              },
+            },
+          },
+          price_per_execution: { type: 'number', description: 'Optional credits charged per express (>= 1)' },
+          publish: { type: 'boolean', description: 'If true, publish to the live marketplace immediately. Defaults to false (draft).' },
+        },
+      },
+    },
+    {
+      name: 'gep_reuse_recipe',
+      description: 'Express (run) an existing recipe into an organism, charged per execution. Fetches the recipe then expresses it with the given input payload. Requires remote mode.',
+      inputSchema: {
+        type: 'object',
+        required: ['recipe_id'],
+        properties: {
+          recipe_id: { type: 'string', description: 'The recipe id to express' },
+          input_payload: { type: 'object', description: 'Optional input passed to the expressed organism' },
+        },
+      },
+    },
   ],
 }));
 
@@ -471,6 +510,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: JSON.stringify(await runtime.getAuditLogs(args), null, 2) }] };
       case 'gep_protocol_info':
         return { content: [{ type: 'text', text: JSON.stringify(runtime.getProtocolInfo(), null, 2) }] };
+      case 'gep_build_recipe':
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.buildRecipe(args), null, 2) }] };
+      case 'gep_reuse_recipe':
+        return { content: [{ type: 'text', text: JSON.stringify(await runtime.reuseRecipe(args), null, 2) }] };
       default:
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     }

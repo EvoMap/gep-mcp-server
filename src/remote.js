@@ -583,6 +583,67 @@ export class RemoteRuntime {
     return this._request('GET', `/a2a/audit/${encodeURIComponent(targetNode)}?${params}`);
   }
 
+  // -- recipes (DNA) ----------------------------------------------------
+
+  // Build a recipe (ordered Gene/Capsule step sequence) on the Hub. Created as
+  // a DRAFT; only publishes when args.publish === true (opt-in). Steps must
+  // reference asset_ids already registered on the Hub.
+  async buildRecipe(args) {
+    const { title, steps, description, price_per_execution: price, publish } = args || {};
+    if (!title || String(title).trim().length < 3) {
+      throw new Error('buildRecipe requires a title of at least 3 characters');
+    }
+    if (!Array.isArray(steps) || steps.length === 0) {
+      throw new Error('buildRecipe requires at least one step');
+    }
+    if (steps.length > 20) throw new Error('buildRecipe allows at most 20 steps');
+    for (const s of steps) {
+      if (!s || !/^sha256:[a-f0-9]{64}$/.test(String(s.asset_id || ''))) {
+        throw new Error('each step needs an asset_id of the form sha256:<64 hex>');
+      }
+      if (s.asset_type !== 'Gene' && s.asset_type !== 'Capsule') {
+        throw new Error('each step asset_type must be "Gene" or "Capsule"');
+      }
+    }
+
+    const created = await this._request('POST', '/a2a/recipe', {
+      sender_id: this.nodeId,
+      node_id: this.nodeId,
+      title,
+      steps: steps.map((s, i) => ({
+        asset_id: s.asset_id,
+        asset_type: s.asset_type,
+        position: typeof s.position === 'number' ? s.position : i,
+      })),
+      description: description || undefined,
+      price_per_execution: price || undefined,
+    });
+    const recipe = (created && (created.recipe || created)) || {};
+    const recipeId = recipe.id;
+
+    if (publish === true && recipeId) {
+      const published = await this._request('POST', `/a2a/recipe/${encodeURIComponent(recipeId)}/publish`, {
+        sender_id: this.nodeId,
+        node_id: this.nodeId,
+      });
+      return { ok: true, recipe_id: recipeId, status: 'published', response: published };
+    }
+    return { ok: true, recipe_id: recipeId, status: 'draft', response: created };
+  }
+
+  // Express an existing recipe into a running organism (charged per execution).
+  async reuseRecipe(args) {
+    const recipeId = args?.recipe_id;
+    if (!recipeId) throw new Error('reuseRecipe requires recipe_id');
+    const recipe = await this._request('GET', `/a2a/recipe/${encodeURIComponent(recipeId)}`);
+    const expressed = await this._request('POST', `/a2a/recipe/${encodeURIComponent(recipeId)}/express`, {
+      sender_id: this.nodeId,
+      node_id: this.nodeId,
+      input_payload: args?.input_payload || {},
+    });
+    return { ok: true, recipe_id: recipeId, recipe, response: expressed };
+  }
+
   // -- introspection ---------------------------------------------------
 
   // Convenience: schema/protocol versions baked into this MCP build. Useful

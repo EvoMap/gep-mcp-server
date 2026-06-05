@@ -399,6 +399,14 @@ export class GepRuntime {
     return { ok: false, error: 'remote_required', hint: 'gep_audit requires remote mode.' };
   }
 
+  buildRecipe() {
+    return { ok: false, error: 'remote_required', hint: 'gep_build_recipe requires remote mode (set EVOMAP_API_KEY + EVOMAP_NODE_ID).' };
+  }
+
+  reuseRecipe() {
+    return { ok: false, error: 'remote_required', hint: 'gep_reuse_recipe requires remote mode (set EVOMAP_API_KEY + EVOMAP_NODE_ID).' };
+  }
+
   getProtocolInfo() {
     return {
       schema_version: SCHEMA_VERSION,
