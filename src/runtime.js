@@ -9,6 +9,7 @@ import {
   validateGene,
   validateCapsule,
 } from './protocol.js';
+import { detectSignals, NO_SIGNAL_FALLBACK } from './signals.canonical.js';
 
 export { SCHEMA_VERSION };
 
@@ -345,22 +346,12 @@ export class GepRuntime {
   }
 
   _extractSignals(context) {
-    const signals = [];
-    const text = String(context || '');
-    const lower = text.toLowerCase();
-
-    if (/\[error\]|error:|exception:|"status":\s*"error"/.test(lower)) signals.push('log_error');
-    if (/\b(add|implement|create|build)\b[^.]{3,60}\b(feature|function|module|capability)\b/i.test(text)) {
-      signals.push('user_feature_request');
-    }
-    if (/\b(i want|i need|we need|please add)\b/i.test(lower)) signals.push('user_feature_request');
-    if (/\b(improve|enhance|upgrade|refactor|optimize)\b/i.test(lower) && !signals.includes('log_error')) {
-      signals.push('user_improvement_suggestion');
-    }
-    if (/\b(slow|timeout|latency|bottleneck|performance)\b/i.test(lower)) signals.push('perf_bottleneck');
-    if (/\b(not supported|cannot|unsupported|missing feature)\b/i.test(lower)) signals.push('capability_gap');
-    if (signals.length === 0) signals.push('stable_success_plateau');
-    return [...new Set(signals)];
+    // Canonical signal vocabulary lives in signals.canonical.js (single source
+    // of truth, kept in sync with @evomap/evolver record-side hooks via a drift
+    // guard). recall keys memory by these signals, so it MUST recognise the same
+    // set the record side emits — test_failure / deployment_issue /
+    // recurring_error were previously missing here and silently failed to recall.
+    return detectSignals(context, { fallback: NO_SIGNAL_FALLBACK });
   }
 
   _selectGene(genes, signals, advice) {
