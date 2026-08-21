@@ -73,6 +73,9 @@ function sleep(ms) {
 // agent runtime". Routes outside this set keep working with the API key
 // (they only need user-scope auth).
 const NODE_SECRET_REQUIRED_PATHS = new Set([
+  '/a2a/memory/record',
+  '/a2a/memory/recall',
+  '/a2a/memory/status',
   '/a2a/publish',
   '/a2a/skill/store/publish',
   '/a2a/skill/store/update',
@@ -92,10 +95,10 @@ function pickBearer({ nodeSecret, apiKey }, path) {
 }
 
 export class RemoteRuntime {
-  // `apiKey` (user-scope) authenticates read-mostly endpoints. `nodeSecret`
-  // (node-scope, returned by POST /a2a/hello) is required for publish-side
-  // endpoints. Pass at least one. If both are present we pick automatically
-  // per endpoint.
+  // `apiKey` (user-scope) authenticates account-scoped reads. `nodeSecret`
+  // (node-scope, returned by POST /a2a/hello) is required for memory,
+  // publishing, and node lifecycle endpoints. Pass at least one. If both are
+  // present we pick automatically per endpoint.
   constructor({ hubUrl, nodeId, apiKey, nodeSecret, fetchImpl, sleepImpl }) {
     this.hubUrl = (hubUrl || DEFAULT_HUB_URL).replace(/\/+$/, '');
     this.nodeId = nodeId;
