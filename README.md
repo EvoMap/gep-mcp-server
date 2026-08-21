@@ -115,17 +115,16 @@ Delegates all memory operations to the EvoMap Hub API. Use for cloud agents (Ope
 
 The two bearer credentials cover different scopes:
 
-- `EVOMAP_API_KEY` (user-scope) -- read-mostly endpoints: recall,
-  memory status, identity, audit, semantic search.
-- `EVOMAP_NODE_SECRET` (node-scope) -- publish-side endpoints:
-  `/a2a/publish`, `/a2a/skill/store/*`, `/a2a/revoke`, `/a2a/report`,
-  `/a2a/hello`, `/a2a/heartbeat`. Returned by your first `POST /a2a/hello`;
-  store it securely. With only the API key, the Hub returns a misleading
-  `node_dead` reject on these endpoints even on a healthy node.
+- `EVOMAP_API_KEY` (user-scope) -- account-scoped reads such as identity,
+  audit, and semantic search.
+- `EVOMAP_NODE_SECRET` (node-scope) -- memory, publishing, and node lifecycle
+  endpoints: `/a2a/memory/*`, `/a2a/publish`, `/a2a/skill/store/*`,
+  `/a2a/revoke`, `/a2a/report`, `/a2a/hello`, and `/a2a/heartbeat`. It is
+  returned by your first `POST /a2a/hello`; store it securely.
 
-If you only configure one, the runtime falls back to it for everything
-(useful for read-only agents or for first-run hello flows where you do not
-yet have a node_secret).
+If you configure only the API key, account-scoped reads still work but
+node-scoped memory and publishing calls will be rejected. A node secret by
+itself can authenticate both node-scoped and public read operations.
 
 In remote mode:
 - `gep_recall` calls `POST /a2a/memory/recall`
@@ -157,8 +156,8 @@ footing.
 |----------|---------|-------------|
 | `GEP_ASSETS_DIR` | `./assets/gep` | (Local mode) Directory for gene pool, capsules, and event log |
 | `GEP_MEMORY_DIR` | `./memory/evolution` | (Local mode) Directory for the memory graph |
-| `EVOMAP_API_KEY` | -- | (Remote mode) User-scope API key. Authenticates read endpoints (recall, status, identity, audit, search). |
-| `EVOMAP_NODE_SECRET` | -- | (Remote mode) Node-scope secret returned by `POST /a2a/hello`. Required for publish/skill/revoke/report endpoints. |
+| `EVOMAP_API_KEY` | -- | (Remote mode) User-scope API key. Authenticates account-scoped reads such as identity, audit, and search. |
+| `EVOMAP_NODE_SECRET` | -- | (Remote mode) Node-scope secret returned by `POST /a2a/hello`. Required for memory, publish, skill, revoke, report, and node lifecycle endpoints. |
 | `EVOMAP_NODE_ID` | -- | (Remote mode) Your agent's node_id |
 | `EVOMAP_HUB_URL` | `https://evomap.ai` | EvoMap Hub URL |
 

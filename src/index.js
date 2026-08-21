@@ -48,8 +48,8 @@ const MEMORY_DIR = process.env.GEP_MEMORY_DIR || resolve(process.cwd(), 'memory/
 const HUB_URL = process.env.EVOMAP_HUB_URL || 'https://evomap.ai';
 
 // Remote mode requires a node id and at least one of:
-//   - EVOMAP_API_KEY     (user-scope, suffices for read-mostly endpoints)
-//   - EVOMAP_NODE_SECRET (node-scope, required for publish/skill/revoke/report;
+//   - EVOMAP_API_KEY     (user-scope, suffices for account-scoped reads)
+//   - EVOMAP_NODE_SECRET (node-scope, required for memory/publish/skill/revoke/report;
 //     returned by POST /a2a/hello on first registration)
 // Configure both when possible; the runtime picks per endpoint.
 const HAS_REMOTE_AUTH = !!(process.env.EVOMAP_API_KEY || process.env.EVOMAP_NODE_SECRET);
