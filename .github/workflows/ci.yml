@@ -5,24 +5,29 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  merge_group:
 
 permissions:
   contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # GitHub-hosted by default; TEST_RUNNER is a dedicated opt-in JSON label
+    # array kept separate from CLA_RUNNER / PUBLISH_RUNNER trust boundaries.
+    runs-on: ${{ vars.TEST_RUNNER && fromJSON(vars.TEST_RUNNER) || 'ubuntu-latest' }}
     strategy:
+      fail-fast: false
       matrix:
         node-version: ['18', '20', '22']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
 
       - run: npm ci
       - run: npm test
+      - run: npm pack --dry-run

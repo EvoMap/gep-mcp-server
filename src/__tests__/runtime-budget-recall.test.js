@@ -334,3 +334,87 @@ describe('serializeBudgetApplied (JSON-safety regression)', () => {
     });
   });
 });
+
+describe('GepRuntime K_auto / reference_only passthrough and signal extraction', () => {
+  it('preserves K_auto Gene coordinates and reference_only Capsule fields across installGene, listGenes, and evolve', () => {
+    const kautoGene = {
+      type: 'Gene',
+      id: 'gene_kauto_local',
+      category: 'repair',
+      signals_match: ['log_error'],
+      summary: 'Repair transient errors with verified K_auto bounds.',
+      strategy: ['Inspect failing trace line', 'Apply bounded retry patch'],
+      constraints: { max_files: 3, forbidden_paths: ['.git'] },
+      validation: ['node -e "process.exit(0)"'],
+      routing_hint: { tier: 'mid', reasoning_level: 'high' },
+      tool_policy: { deny: ['Bash'], severity: 'warn' },
+      claims: [{ predicate: 'exit_code==0', kind: 'behavioral' }],
+      scope: { signals: ['log_error'], predicate: 'matches(log_error)' },
+      runtime_profile: { runtime: 'node@22', env_class: 'local' },
+      verifier_profile: { verifier: 'vitest', decision: 'pass' },
+    };
+    const installed = runtime.installGene({ gene: kautoGene });
+    expect(installed.ok).toBe(true);
+
+    const listed = runtime.listGenes({ category: 'repair' });
+    expect(listed.genes[0].claims).toEqual(kautoGene.claims);
+    expect(listed.genes[0].scope).toEqual(kautoGene.scope);
+    expect(listed.genes[0].runtime_profile).toEqual(kautoGene.runtime_profile);
+    expect(listed.genes[0].verifier_profile).toEqual(kautoGene.verifier_profile);
+    expect(listed.genes[0].routing_hint).toEqual(kautoGene.routing_hint);
+    expect(listed.genes[0].tool_policy).toEqual(kautoGene.tool_policy);
+
+    runtime.store.upsertCapsule({
+      type: 'Capsule',
+      id: 'cap_ref_local',
+      trigger: ['log_error'],
+      gene: 'gene_kauto_local',
+      summary: 'Reference capsule for log_error triage',
+      confidence: 0.9,
+      evidence_mode: 'reference_only',
+      source_type: 'reference',
+      blast_radius: { files: 0, lines: 0 },
+      execution_trace: [],
+      diff: null,
+      content: { text: 'Triage reference note', mime: 'text/plain' },
+      proof_of_work: {
+        kind: 'artifact_hash',
+        artifact_hash: { sha256: 'a'.repeat(64), mime: 'text/plain', size: 21 },
+      },
+      outcome: { status: 'success', score: 0.9 },
+    });
+
+    const evolved = runtime.evolve({
+      context: '{\n  "request_id": "req_1"\n}\nTypeError: connection failed at Client.send',
+    });
+    expect(evolved.ok).toBe(true);
+    expect(evolved.signals).toContain('log_error');
+    expect(evolved.selected_gene.claims).toEqual(kautoGene.claims);
+    expect(evolved.selected_gene.verifier_profile).toEqual(kautoGene.verifier_profile);
+    expect(evolved.matching_capsule.evidence_mode).toBe('reference_only');
+    expect(evolved.matching_capsule.content).toEqual({ text: 'Triage reference note', mime: 'text/plain' });
+    expect(evolved.matching_capsule.proof_of_work.kind).toBe('artifact_hash');
+  });
+
+  it('rejects malformed K_auto or unknown fields in installGene (negative control)', () => {
+    const bad = runtime.installGene({
+      gene: {
+        type: 'Gene',
+        id: 'gene_bad_local',
+        category: 'repair',
+        tool_policy: { allow_only: [] },
+      },
+    });
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toMatch(/tool_policy\.allow_only/);
+  });
+
+  it('does not mask real stack traces behind earlier JSON lines, while ignoring pure JSON status fields', () => {
+    const mixedSignals = runtime._extractSignals('{\n  "step": "upgrade"\n}\nError: socket hang up');
+    expect(mixedSignals).toContain('log_error');
+
+    const pureJsonAndComment = runtime._extractSignals('// error handling comment\n{\n  "status": "error",\n  "failed": false\n}');
+    expect(pureJsonAndComment).not.toContain('log_error');
+    expect(pureJsonAndComment).toEqual(['stable_success_plateau']);
+  });
+});

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { RemoteRuntime } from '../remote.js';
+import { SCHEMA_VERSION } from '../protocol.js';
 
 function buildResponse({ ok = true, status = 200, body = {}, text = '' } = {}) {
   const headers = new Map();
@@ -115,7 +117,7 @@ describe('publishBundle', () => {
     expect(Array.isArray(body.payload.assets)).toBe(true);
     expect(body.payload.assets).toHaveLength(2);
     expect(body.payload.assets[0].asset_id).toMatch(/^sha256:/);
-    expect(body.payload.assets[0].schema_version).toBe('1.7.0');
+    expect(body.payload.assets[0].schema_version).toBe(SCHEMA_VERSION);
     expect(r.gene_asset_id).toMatch(/^sha256:/);
     expect(r.capsule_asset_id).toMatch(/^sha256:/);
   });
@@ -295,9 +297,98 @@ describe('getProtocolInfo', () => {
   it('reports schema/protocol versions for compatibility checks', () => {
     const runtime = buildRuntime({ fetchImpl: vi.fn() });
     const info = runtime.getProtocolInfo();
-    expect(info.schema_version).toBe('1.7.0');
+    expect(info.schema_version).toBe(SCHEMA_VERSION);
     expect(info.protocol_name).toBe('gep-a2a');
     expect(info.mode).toBe('remote');
     expect(info.node_id).toBe('node_test');
+  });
+});
+
+describe('publishBundle 1.13–1.14 protocol passthrough and gates', () => {
+  it('forwards K_auto Gene coordinates and reference_only Capsule intact without mutating caller objects', async () => {
+    let capturedBody;
+    const fetchImpl = vi.fn(async (_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return buildResponse({ ok: true, body: { ok: true, accepted: 2 } });
+    });
+    const runtime = buildRuntime({ fetchImpl, apiKey: 'api_x', nodeSecret: 'secret_y' });
+
+    const kautoGene = {
+      ...validGene,
+      routing_hint: { tier: 'cheap', reasoning_level: 'medium' },
+      tool_policy: { deny: ['Bash'], severity: 'warn' },
+      claims: [{ predicate: 'exit_code==0', kind: 'behavioral' }],
+      scope: { signals: ['log_error'], predicate: 'matches(log_error)' },
+      runtime_profile: { runtime: 'node@22', env_class: 'ci' },
+      verifier_profile: { verifier: 'vitest', decision: 'pass' },
+    };
+    const text = 'Reference evidence payload for non-execution capsule';
+    const refCapsule = {
+      type: 'Capsule',
+      id: 'cap_ref_wire',
+      trigger: ['log_error'],
+      summary: 'Reference-only capsule verified by SHA-256 artifact hash',
+      confidence: 0.92,
+      evidence_mode: 'reference_only',
+      source_type: 'reference',
+      blast_radius: { files: 0, lines: 0 },
+      execution_trace: [],
+      diff: null,
+      content: { text, mime: 'text/plain' },
+      proof_of_work: {
+        kind: 'artifact_hash',
+        artifact_hash: {
+          sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+          mime: 'text/plain',
+          size: Buffer.byteLength(text, 'utf8'),
+        },
+      },
+      derivation_tokens: { input_tokens: 200, output_tokens: 80, total_tokens: 280, basis: 'measured' },
+      outcome: { status: 'success', score: 0.92, notes: 'caller-local note' },
+    };
+
+    await runtime.publishBundle({ gene: kautoGene, capsule: refCapsule });
+
+    const [wireGene, wireCapsule] = capturedBody.payload.assets;
+    expect(wireGene.claims).toEqual(kautoGene.claims);
+    expect(wireGene.scope).toEqual(kautoGene.scope);
+    expect(wireGene.runtime_profile).toEqual(kautoGene.runtime_profile);
+    expect(wireGene.verifier_profile).toEqual(kautoGene.verifier_profile);
+    expect(wireGene.routing_hint).toEqual(kautoGene.routing_hint);
+    expect(wireGene.tool_policy).toEqual(kautoGene.tool_policy);
+
+    expect(wireCapsule.evidence_mode).toBe('reference_only');
+    expect(wireCapsule.content).toEqual({ text, mime: 'text/plain' });
+    expect(wireCapsule.proof_of_work).toEqual(refCapsule.proof_of_work);
+    expect(wireCapsule.derivation_tokens).toEqual(refCapsule.derivation_tokens);
+    expect(wireCapsule.outcome).toEqual({ status: 'success', score: 0.92 });
+    // Caller input outcome was not mutated in place
+    expect(refCapsule.outcome.notes).toBe('caller-local note');
+  });
+
+  it('blocks tampered reference_only Capsule before network call', async () => {
+    const fetchImpl = vi.fn();
+    const runtime = buildRuntime({ fetchImpl });
+    const badRefCapsule = {
+      type: 'Capsule',
+      id: 'cap_ref_tampered',
+      trigger: ['log_error'],
+      summary: 'Tampered reference capsule with wrong sha256',
+      confidence: 0.9,
+      evidence_mode: 'reference_only',
+      source_type: 'reference',
+      blast_radius: { files: 0, lines: 0 },
+      execution_trace: [],
+      diff: null,
+      content: { text: 'real text', mime: 'text/plain' },
+      proof_of_work: {
+        kind: 'artifact_hash',
+        artifact_hash: { sha256: 'a'.repeat(64), mime: 'text/plain', size: 9 },
+      },
+      outcome: { status: 'success', score: 0.9 },
+    };
+    await expect(runtime.publishBundle({ gene: validGene, capsule: badRefCapsule }))
+      .rejects.toThrow(/artifact_sha256_mismatch/);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

@@ -28,18 +28,48 @@
 import {
   SCHEMA_VERSION,
   GEP_GENE_CATEGORIES,
+  GEP_MUTATION_CATEGORIES,
   GEP_OUTCOME_STATUSES,
+  GEP_SOURCE_TYPES,
+  GEP_RISK_LEVELS,
+  GEP_CAPSULE_VISIBILITIES,
+  GEP_CAPSULE_COST_TIERS,
+  GEP_GENE_ROUTING_TIERS,
+  GEP_GENE_REASONING_LEVELS,
+  GEP_GENE_TOOL_POLICY_SEVERITIES,
+  GEP_GENE_CLAIM_KINDS,
+  GEP_GENE_RUNTIME_ENV_CLASSES,
+  GEP_GENE_VERIFIER_DECISIONS,
+  GEP_EVIDENCE_MODES,
+  REFERENCE_ONLY_EVIDENCE_MODE,
   canonicalize,
+  classifyCapsuleEvidence,
   computeAssetId,
+  validateCapsuleEvidence,
   verifyAssetId,
 } from '@evomap/gep-sdk';
 
 export {
   SCHEMA_VERSION,
   GEP_GENE_CATEGORIES,
+  GEP_MUTATION_CATEGORIES,
   GEP_OUTCOME_STATUSES,
+  GEP_SOURCE_TYPES,
+  GEP_RISK_LEVELS,
+  GEP_CAPSULE_VISIBILITIES,
+  GEP_CAPSULE_COST_TIERS,
+  GEP_GENE_ROUTING_TIERS,
+  GEP_GENE_REASONING_LEVELS,
+  GEP_GENE_TOOL_POLICY_SEVERITIES,
+  GEP_GENE_CLAIM_KINDS,
+  GEP_GENE_RUNTIME_ENV_CLASSES,
+  GEP_GENE_VERIFIER_DECISIONS,
+  GEP_EVIDENCE_MODES,
+  REFERENCE_ONLY_EVIDENCE_MODE,
   canonicalize,
+  classifyCapsuleEvidence,
   computeAssetId,
+  validateCapsuleEvidence,
   verifyAssetId,
 };
 
@@ -91,18 +121,273 @@ export function stampAsset(asset) {
 const GENE_MIN_STRATEGY_STEPS = 2;
 const GENE_MIN_STRATEGY_STEP_LEN = 15;
 
+const ALLOWED_GENE_FIELDS = new Set([
+  'type',
+  'schema_version',
+  'id',
+  'category',
+  'signals_match',
+  'preconditions',
+  'strategy',
+  'constraints',
+  'validation',
+  'summary',
+  'epigenetic_marks',
+  'learning_history',
+  'anti_patterns',
+  'routing_hint',
+  'tool_policy',
+  'claims',
+  'scope',
+  'runtime_profile',
+  'verifier_profile',
+  'asset_id',
+  'parent',
+  'model_name',
+]);
+
+const ALLOWED_CAPSULE_FIELDS = new Set([
+  'type',
+  'schema_version',
+  'id',
+  'trigger',
+  'gene',
+  'summary',
+  'confidence',
+  'blast_radius',
+  'outcome',
+  'success_streak',
+  'success_reason',
+  'gene_library_version',
+  'env_fingerprint',
+  'source_type',
+  'reused_asset_id',
+  'content',
+  'diff',
+  'strategy',
+  'execution_trace',
+  'a2a',
+  'cost_tokens',
+  'cost_usd',
+  'derivation_tokens',
+  'trigger_context',
+  'resolution_status',
+  'proof_of_work',
+  'asset_id',
+  'visibility',
+  'scope',
+  'cost_tier',
+  'pack_of',
+  'author',
+  'evidence_mode',
+  'code_snippet',
+  'model_name',
+  'parent',
+]);
+
+const CAPSULE_RESOLUTION_STATUSES = [
+  'pending',
+  'suppressed_observationally',
+  'resolved_by_evidence',
+  'regressed',
+  'inconclusive',
+];
+
+const CAPSULE_POW_KINDS = [
+  'git_diff',
+  'artifact_hash',
+  'external_receipt',
+  'tool_call_trace',
+];
+
+const ASSET_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
+
+function isPlainObject(v) {
+  return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+}
+
+function isNonEmptyString(v) {
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
+function isNonEmptyStringArray(v) {
+  return Array.isArray(v) && v.length > 0 && v.every(isNonEmptyString);
+}
+
+function findUnsupportedKeys(obj, allowed) {
+  return Object.keys(obj).filter((k) => !allowed.has(k));
+}
+
+// Validate strict schema fields added in GEP 1.12.0–1.14.0 (routing_hint,
+// tool_policy, K_auto coordinates, constraints, and top-level field seal).
+// Shared between publish-side validateGene() and local GepRuntime.installGene().
+export function validateGeneStrictExtensions(gene) {
+  const errors = [];
+  if (!isPlainObject(gene)) return ['gene must be an object'];
+
+  for (const key of findUnsupportedKeys(gene, ALLOWED_GENE_FIELDS)) {
+    errors.push(`gene contains unsupported field "${key}"`);
+  }
+
+  if (gene.parent !== undefined && (typeof gene.parent !== 'string' || !ASSET_ID_PATTERN.test(gene.parent))) {
+    errors.push('gene.parent, when present, must be a sha256:<64 hex> asset_id (omit when unknown; null is invalid)');
+  }
+
+  if (gene.constraints !== undefined && gene.constraints !== null) {
+    if (!isPlainObject(gene.constraints)) {
+      errors.push('gene.constraints, when present, must be an object');
+    } else {
+      for (const k of findUnsupportedKeys(gene.constraints, new Set(['max_files', 'forbidden_paths']))) {
+        errors.push(`gene.constraints contains unsupported field "${k}"`);
+      }
+      if (
+        gene.constraints.max_files !== undefined
+        && (!Number.isInteger(gene.constraints.max_files) || gene.constraints.max_files < 1)
+      ) {
+        errors.push('gene.constraints.max_files, when present, must be an integer >= 1');
+      }
+      if (
+        gene.constraints.forbidden_paths !== undefined
+        && !isNonEmptyStringArray(gene.constraints.forbidden_paths)
+      ) {
+        errors.push('gene.constraints.forbidden_paths, when present, must be a non-empty array of non-empty strings');
+      }
+    }
+  }
+
+  if (gene.routing_hint !== undefined && gene.routing_hint !== null) {
+    if (!isPlainObject(gene.routing_hint)) {
+      errors.push('gene.routing_hint, when present, must be an object or null');
+    } else {
+      for (const k of findUnsupportedKeys(gene.routing_hint, new Set(['tier', 'reasoning_level']))) {
+        errors.push(`gene.routing_hint contains unsupported field "${k}"`);
+      }
+      if (gene.routing_hint.tier !== undefined && !GEP_GENE_ROUTING_TIERS.includes(gene.routing_hint.tier)) {
+        errors.push(`gene.routing_hint.tier must be ${GEP_GENE_ROUTING_TIERS.join('|')}`);
+      }
+      if (
+        gene.routing_hint.reasoning_level !== undefined
+        && !GEP_GENE_REASONING_LEVELS.includes(gene.routing_hint.reasoning_level)
+      ) {
+        errors.push(`gene.routing_hint.reasoning_level must be ${GEP_GENE_REASONING_LEVELS.join('|')}`);
+      }
+    }
+  }
+
+  if (gene.tool_policy !== undefined && gene.tool_policy !== null) {
+    if (!isPlainObject(gene.tool_policy)) {
+      errors.push('gene.tool_policy, when present, must be an object or null');
+    } else {
+      for (const k of findUnsupportedKeys(gene.tool_policy, new Set(['allow_only', 'deny', 'severity']))) {
+        errors.push(`gene.tool_policy contains unsupported field "${k}"`);
+      }
+      if (gene.tool_policy.allow_only !== undefined && !isNonEmptyStringArray(gene.tool_policy.allow_only)) {
+        errors.push('gene.tool_policy.allow_only, when present, must be a non-empty array of non-empty strings');
+      }
+      if (gene.tool_policy.deny !== undefined && !isNonEmptyStringArray(gene.tool_policy.deny)) {
+        errors.push('gene.tool_policy.deny, when present, must be a non-empty array of non-empty strings');
+      }
+      if (
+        gene.tool_policy.severity !== undefined
+        && !GEP_GENE_TOOL_POLICY_SEVERITIES.includes(gene.tool_policy.severity)
+      ) {
+        errors.push(`gene.tool_policy.severity must be ${GEP_GENE_TOOL_POLICY_SEVERITIES.join('|')}`);
+      }
+    }
+  }
+
+  // Schema 1.13.0 K_auto coordinates: claims, scope, runtime_profile, verifier_profile.
+  if (gene.claims !== undefined && gene.claims !== null) {
+    if (!Array.isArray(gene.claims)) {
+      errors.push('gene.claims, when present, must be an array or null');
+    } else {
+      gene.claims.forEach((claim, i) => {
+        if (!isPlainObject(claim)) {
+          errors.push(`gene.claims[${i}] must be an object`);
+          return;
+        }
+        for (const k of findUnsupportedKeys(claim, new Set(['predicate', 'kind']))) {
+          errors.push(`gene.claims[${i}] contains unsupported field "${k}"`);
+        }
+        if (!isNonEmptyString(claim.predicate)) {
+          errors.push(`gene.claims[${i}].predicate must be a non-empty string`);
+        }
+        if (claim.kind !== undefined && !GEP_GENE_CLAIM_KINDS.includes(claim.kind)) {
+          errors.push(`gene.claims[${i}].kind must be ${GEP_GENE_CLAIM_KINDS.join('|')}`);
+        }
+      });
+    }
+  }
+
+  if (gene.scope !== undefined && gene.scope !== null) {
+    if (!isPlainObject(gene.scope)) {
+      errors.push('gene.scope, when present, must be an object or null');
+    } else {
+      for (const k of findUnsupportedKeys(gene.scope, new Set(['signals', 'predicate']))) {
+        errors.push(`gene.scope contains unsupported field "${k}"`);
+      }
+      if (gene.scope.signals !== undefined && !isNonEmptyStringArray(gene.scope.signals)) {
+        errors.push('gene.scope.signals, when present, must be a non-empty array of non-empty strings');
+      }
+      if (gene.scope.predicate !== undefined && !isNonEmptyString(gene.scope.predicate)) {
+        errors.push('gene.scope.predicate, when present, must be a non-empty string');
+      }
+    }
+  }
+
+  if (gene.runtime_profile !== undefined && gene.runtime_profile !== null) {
+    if (!isPlainObject(gene.runtime_profile)) {
+      errors.push('gene.runtime_profile, when present, must be an object or null');
+    } else {
+      for (const k of findUnsupportedKeys(gene.runtime_profile, new Set(['runtime', 'env_class']))) {
+        errors.push(`gene.runtime_profile contains unsupported field "${k}"`);
+      }
+      if (gene.runtime_profile.runtime !== undefined && !isNonEmptyString(gene.runtime_profile.runtime)) {
+        errors.push('gene.runtime_profile.runtime, when present, must be a non-empty string');
+      }
+      if (
+        gene.runtime_profile.env_class !== undefined
+        && !GEP_GENE_RUNTIME_ENV_CLASSES.includes(gene.runtime_profile.env_class)
+      ) {
+        errors.push(`gene.runtime_profile.env_class must be ${GEP_GENE_RUNTIME_ENV_CLASSES.join('|')}`);
+      }
+    }
+  }
+
+  if (gene.verifier_profile !== undefined && gene.verifier_profile !== null) {
+    if (!isPlainObject(gene.verifier_profile)) {
+      errors.push('gene.verifier_profile, when present, must be an object or null');
+    } else {
+      for (const k of findUnsupportedKeys(gene.verifier_profile, new Set(['verifier', 'decision']))) {
+        errors.push(`gene.verifier_profile contains unsupported field "${k}"`);
+      }
+      if (gene.verifier_profile.verifier !== undefined && !isNonEmptyString(gene.verifier_profile.verifier)) {
+        errors.push('gene.verifier_profile.verifier, when present, must be a non-empty string');
+      }
+      if (
+        gene.verifier_profile.decision !== undefined
+        && !GEP_GENE_VERIFIER_DECISIONS.includes(gene.verifier_profile.decision)
+      ) {
+        errors.push(`gene.verifier_profile.decision must be ${GEP_GENE_VERIFIER_DECISIONS.join('|')}`);
+      }
+    }
+  }
+
+  return errors;
+}
+
 // Validate a Gene asset has the minimum required shape for /a2a/publish.
 export function validateGene(gene) {
   const errors = [];
-  if (!gene || typeof gene !== 'object') {
+  if (!isPlainObject(gene)) {
     return ['gene must be an object'];
   }
   if (gene.type !== 'Gene') errors.push('gene.type must be "Gene"');
-  if (!gene.id || typeof gene.id !== 'string') errors.push('gene.id is required');
+  if (!isNonEmptyString(gene.id)) errors.push('gene.id is required');
   if (!gene.category || !GEP_GENE_CATEGORIES.includes(gene.category)) {
     errors.push(`gene.category must be ${GEP_GENE_CATEGORIES.join('|')}`);
   }
-  if (!Array.isArray(gene.signals_match) || gene.signals_match.length === 0) {
+  if (!isNonEmptyStringArray(gene.signals_match)) {
     errors.push('gene.signals_match must be a non-empty array');
   }
   if (!Array.isArray(gene.strategy) || gene.strategy.length < GENE_MIN_STRATEGY_STEPS) {
@@ -119,6 +404,7 @@ export function validateGene(gene) {
   } else if (gene.validation.some((c) => typeof c !== 'string' || c.trim().length === 0)) {
     errors.push('gene.validation: each command must be a non-empty string');
   }
+  errors.push(...validateGeneStrictExtensions(gene));
   return errors;
 }
 
@@ -128,10 +414,16 @@ function isFiniteNumber(n) {
 
 export function validateCapsule(capsule) {
   const errors = [];
-  if (!capsule || typeof capsule !== 'object') return ['capsule must be an object'];
+  if (!isPlainObject(capsule)) return ['capsule must be an object'];
+  for (const key of findUnsupportedKeys(capsule, ALLOWED_CAPSULE_FIELDS)) {
+    errors.push(`capsule contains unsupported field "${key}"`);
+  }
   if (capsule.type !== 'Capsule') errors.push('capsule.type must be "Capsule"');
-  if (!capsule.id || typeof capsule.id !== 'string') errors.push('capsule.id is required');
-  if (!Array.isArray(capsule.trigger) || capsule.trigger.length === 0) {
+  if (!isNonEmptyString(capsule.id)) errors.push('capsule.id is required');
+  if (capsule.parent !== undefined && (typeof capsule.parent !== 'string' || !ASSET_ID_PATTERN.test(capsule.parent))) {
+    errors.push('capsule.parent, when present, must be a sha256:<64 hex> asset_id (omit when unknown; null is invalid)');
+  }
+  if (!isNonEmptyStringArray(capsule.trigger)) {
     errors.push('capsule.trigger must be a non-empty array of signals');
   }
   if (typeof capsule.summary !== 'string' || capsule.summary.trim().length < 10) {
@@ -140,7 +432,7 @@ export function validateCapsule(capsule) {
   if (!isFiniteNumber(capsule.confidence) || capsule.confidence < 0 || capsule.confidence > 1) {
     errors.push('capsule.confidence must be a number in [0, 1]');
   }
-  if (!capsule.blast_radius || typeof capsule.blast_radius !== 'object') {
+  if (!isPlainObject(capsule.blast_radius)) {
     errors.push('capsule.blast_radius must be an object with numeric files+lines');
   } else {
     if (!isFiniteNumber(capsule.blast_radius.files) || capsule.blast_radius.files < 0) {
@@ -150,17 +442,20 @@ export function validateCapsule(capsule) {
       errors.push('capsule.blast_radius.lines must be a non-negative number');
     }
   }
-  if (!capsule.env_fingerprint || typeof capsule.env_fingerprint !== 'object') {
-    errors.push('capsule.env_fingerprint must be an object with platform+arch strings');
-  } else {
-    if (typeof capsule.env_fingerprint.platform !== 'string' || capsule.env_fingerprint.platform.length === 0) {
-      errors.push('capsule.env_fingerprint.platform must be a non-empty string');
-    }
-    if (typeof capsule.env_fingerprint.arch !== 'string' || capsule.env_fingerprint.arch.length === 0) {
-      errors.push('capsule.env_fingerprint.arch must be a non-empty string');
+  const isReferenceOnly = capsule.evidence_mode === REFERENCE_ONLY_EVIDENCE_MODE;
+  if (!isReferenceOnly || (capsule.env_fingerprint !== undefined && capsule.env_fingerprint !== null)) {
+    if (!isPlainObject(capsule.env_fingerprint)) {
+      errors.push('capsule.env_fingerprint must be an object with platform+arch strings');
+    } else {
+      if (typeof capsule.env_fingerprint.platform !== 'string' || capsule.env_fingerprint.platform.length === 0) {
+        errors.push('capsule.env_fingerprint.platform must be a non-empty string');
+      }
+      if (typeof capsule.env_fingerprint.arch !== 'string' || capsule.env_fingerprint.arch.length === 0) {
+        errors.push('capsule.env_fingerprint.arch must be a non-empty string');
+      }
     }
   }
-  if (!capsule.outcome || typeof capsule.outcome !== 'object') {
+  if (!isPlainObject(capsule.outcome)) {
     errors.push('capsule.outcome must be an object with at least { status: "success"|"failed" }');
   } else {
     if (!capsule.outcome.status || !GEP_OUTCOME_STATUSES.includes(capsule.outcome.status)) {
@@ -184,14 +479,106 @@ export function validateCapsule(capsule) {
       errors.push('capsule.cost_usd, when present, must be a non-negative number or null');
     }
   }
-  // Substance gate: the Hub rejects capsules that have only metadata. At
-  // least one of content (>=50 chars), strategy (>=1 step), code_snippet
-  // (>=50 chars), or diff (>=50 chars) must be present so a future reader
-  // can act on the capsule.
-  const hasContent = typeof capsule.content === 'string' && capsule.content.length >= 50;
+  // Schema 1.8.0–1.12.0 optional strict fields.
+  if (capsule.source_type !== undefined && capsule.source_type !== null && !GEP_SOURCE_TYPES.includes(capsule.source_type)) {
+    errors.push(`capsule.source_type must be ${GEP_SOURCE_TYPES.join('|')} or null`);
+  }
+  if (capsule.visibility !== undefined && capsule.visibility !== null && !GEP_CAPSULE_VISIBILITIES.includes(capsule.visibility)) {
+    errors.push(`capsule.visibility must be ${GEP_CAPSULE_VISIBILITIES.join('|')} or null`);
+  }
+  if (capsule.cost_tier !== undefined && capsule.cost_tier !== null && !GEP_CAPSULE_COST_TIERS.includes(capsule.cost_tier)) {
+    errors.push(`capsule.cost_tier must be ${GEP_CAPSULE_COST_TIERS.join('|')} or null`);
+  }
+  if (capsule.scope !== undefined && capsule.scope !== null) {
+    if (!Array.isArray(capsule.scope) || capsule.scope.some((s) => !isNonEmptyString(s))) {
+      errors.push('capsule.scope, when present, must be an array of non-empty strings or null');
+    }
+  }
+  if (capsule.pack_of !== undefined && capsule.pack_of !== null) {
+    if (!Array.isArray(capsule.pack_of) || capsule.pack_of.some((id) => typeof id !== 'string' || !ASSET_ID_PATTERN.test(id))) {
+      errors.push('capsule.pack_of, when present, must be an array of sha256:<64 hex> asset_ids or null');
+    }
+  }
+  if (capsule.author !== undefined && capsule.author !== null) {
+    if (!isPlainObject(capsule.author)) {
+      errors.push('capsule.author, when present, must be an object or null');
+    } else {
+      for (const k of findUnsupportedKeys(capsule.author, new Set(['handle', 'evox_install_id']))) {
+        errors.push(`capsule.author contains unsupported field "${k}"`);
+      }
+      if (!isNonEmptyString(capsule.author.handle) || !isNonEmptyString(capsule.author.evox_install_id)) {
+        errors.push('capsule.author requires non-empty handle and evox_install_id strings');
+      }
+    }
+  }
+  if (capsule.derivation_tokens !== undefined && capsule.derivation_tokens !== null) {
+    if (!isPlainObject(capsule.derivation_tokens)) {
+      errors.push('capsule.derivation_tokens, when present, must be an object or null');
+    } else {
+      for (const k of findUnsupportedKeys(capsule.derivation_tokens, new Set(['input_tokens', 'output_tokens', 'total_tokens', 'basis']))) {
+        errors.push(`capsule.derivation_tokens contains unsupported field "${k}"`);
+      }
+      for (const k of ['input_tokens', 'output_tokens', 'total_tokens']) {
+        const v = capsule.derivation_tokens[k];
+        if (!Number.isInteger(v) || v < 0) {
+          errors.push(`capsule.derivation_tokens.${k} is required and must be a non-negative integer`);
+        }
+      }
+      if (capsule.derivation_tokens.basis !== undefined && typeof capsule.derivation_tokens.basis !== 'string') {
+        errors.push('capsule.derivation_tokens.basis, when present, must be a string');
+      }
+    }
+  }
+  if (
+    capsule.resolution_status !== undefined
+    && capsule.resolution_status !== null
+    && !CAPSULE_RESOLUTION_STATUSES.includes(capsule.resolution_status)
+  ) {
+    errors.push(`capsule.resolution_status must be ${CAPSULE_RESOLUTION_STATUSES.join('|')} or null`);
+  }
+  if (capsule.proof_of_work !== undefined) {
+    if (!isPlainObject(capsule.proof_of_work)) {
+      errors.push('capsule.proof_of_work, when present, must be an object');
+    } else {
+      for (const k of findUnsupportedKeys(capsule.proof_of_work, new Set(['kind', 'git_diff', 'artifact_hash', 'external_receipt', 'tool_call_trace']))) {
+        errors.push(`capsule.proof_of_work contains unsupported field "${k}"`);
+      }
+      if (!CAPSULE_POW_KINDS.includes(capsule.proof_of_work.kind)) {
+        errors.push(`capsule.proof_of_work.kind must be ${CAPSULE_POW_KINDS.join('|')}`);
+      }
+    }
+  }
+  if (capsule.trigger_context !== undefined) {
+    if (!isPlainObject(capsule.trigger_context)) {
+      errors.push('capsule.trigger_context, when present, must be an object');
+    } else {
+      for (const k of findUnsupportedKeys(capsule.trigger_context, new Set(['prompt', 'reasoning_trace', 'context_signals', 'session_id', 'agent_model']))) {
+        errors.push(`capsule.trigger_context contains unsupported field "${k}"`);
+      }
+    }
+  }
+
+  // Schema 1.14.0: non-execution reference-only Capsule evidence contract.
+  if (capsule.evidence_mode !== undefined) {
+    const evCheck = validateCapsuleEvidence(capsule);
+    if (!evCheck.valid) {
+      for (const r of evCheck.reasons) {
+        errors.push(`capsule.${r.path || 'evidence_mode'}: ${r.code}`);
+      }
+    }
+    return errors;
+  }
+
+  // Substance gate for execution capsules: the Hub rejects capsules that have
+  // only metadata. At least one of content (>=50 chars), strategy (>=1 step),
+  // code_snippet (>=50 chars), or diff (>=50 chars or structured object) must
+  // be present so a future reader can act on the capsule.
+  const hasContent = (typeof capsule.content === 'string' && capsule.content.length >= 50)
+    || (isPlainObject(capsule.content) && typeof capsule.content.text === 'string' && capsule.content.text.length >= 50);
   const hasStrategy = Array.isArray(capsule.strategy) && capsule.strategy.length > 0;
   const hasCode = typeof capsule.code_snippet === 'string' && capsule.code_snippet.length >= 50;
-  const hasDiff = typeof capsule.diff === 'string' && capsule.diff.length >= 50;
+  const hasDiff = (typeof capsule.diff === 'string' && capsule.diff.length >= 50)
+    || (isPlainObject(capsule.diff) && Object.keys(capsule.diff).length > 0);
   if (!hasContent && !hasStrategy && !hasCode && !hasDiff) {
     errors.push('capsule must include at least one of content (>=50 chars), strategy (>=1 step), code_snippet (>=50 chars), or diff (>=50 chars)');
   }

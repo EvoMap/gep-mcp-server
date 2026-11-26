@@ -297,12 +297,18 @@ export class RemoteRuntime {
 
     const geneStrategies = communityGenes
       .filter(g => g.strategy || g.strategy_steps)
-      .map(g => ({
-        id: g.asset_id || g.id,
-        category: g.category,
-        summary: g.summary || g.description,
-        strategy: g.strategy || g.strategy_steps,
-      }));
+      .map(g => {
+        const entry = {
+          id: g.asset_id || g.id,
+          category: g.category,
+          summary: g.summary || g.description,
+          strategy: g.strategy || g.strategy_steps,
+        };
+        for (const k of ['parent', 'routing_hint', 'tool_policy', 'claims', 'scope', 'runtime_profile', 'verifier_profile']) {
+          if (g[k] !== undefined) entry[k] = g[k];
+        }
+        return entry;
+      });
 
     return {
       ok: true,
@@ -384,7 +390,10 @@ export class RemoteRuntime {
     // Stamp asset_id + schema_version on every asset before computing the
     // bundle signature. Mutate copies so the caller's object stays clean.
     const geneCopy = { ...gene };
-    const capsuleCopy = { ...capsule };
+    const capsuleCopy = {
+      ...capsule,
+      ...(capsule.outcome && typeof capsule.outcome === 'object' ? { outcome: { ...capsule.outcome } } : {}),
+    };
     if (modelName && typeof modelName === 'string') {
       geneCopy.model_name = modelName;
       capsuleCopy.model_name = modelName;
@@ -589,35 +598,88 @@ export class RemoteRuntime {
   // a DRAFT; only publishes when args.publish === true (opt-in). Steps must
   // reference asset_ids already registered on the Hub.
   async buildRecipe(args) {
-    const { title, steps, description, price_per_execution: price, publish } = args || {};
-    if (!title || String(title).trim().length < 3) {
+    const {
+      title,
+      steps,
+      description,
+      price_per_execution: price,
+      currency,
+      max_concurrent: maxConcurrent,
+      input_schema: inputSchema,
+      output_schema: outputSchema,
+      publish,
+    } = args || {};
+    if (typeof title !== 'string' || title.trim().length < 3) {
       throw new Error('buildRecipe requires a title of at least 3 characters');
+    }
+    if (title.length > 200) {
+      throw new Error('buildRecipe allows a title of at most 200 characters');
+    }
+    if (description !== undefined && (typeof description !== 'string' || description.length > 2000)) {
+      throw new Error('buildRecipe description, when provided, must be a string of at most 2000 characters');
     }
     if (!Array.isArray(steps) || steps.length === 0) {
       throw new Error('buildRecipe requires at least one step');
     }
     if (steps.length > 20) throw new Error('buildRecipe allows at most 20 steps');
     for (const s of steps) {
-      if (!s || !/^sha256:[a-f0-9]{64}$/.test(String(s.asset_id || ''))) {
+      if (!s || typeof s !== 'object' || Array.isArray(s) || !/^sha256:[a-f0-9]{64}$/.test(String(s.asset_id || ''))) {
         throw new Error('each step needs an asset_id of the form sha256:<64 hex>');
       }
       if (s.asset_type !== 'Gene' && s.asset_type !== 'Capsule') {
         throw new Error('each step asset_type must be "Gene" or "Capsule"');
       }
+      if (s.position !== undefined && (!Number.isInteger(s.position) || s.position < 0)) {
+        throw new Error('step position, when provided, must be a non-negative integer');
+      }
+      if (s.condition !== undefined && s.condition !== null && typeof s.condition !== 'string') {
+        throw new Error('step condition, when provided, must be a string or null');
+      }
+      if (s.parameters !== undefined && s.parameters !== null && (typeof s.parameters !== 'object' || Array.isArray(s.parameters))) {
+        throw new Error('step parameters, when provided, must be an object or null');
+      }
+      if (s.optional !== undefined && typeof s.optional !== 'boolean') {
+        throw new Error('step optional, when provided, must be a boolean');
+      }
+      if (s.fallback_gene_id !== undefined && s.fallback_gene_id !== null && typeof s.fallback_gene_id !== 'string') {
+        throw new Error('step fallback_gene_id, when provided, must be a string or null');
+      }
+    }
+    if (price !== undefined && (typeof price !== 'number' || !Number.isFinite(price) || price < 1)) {
+      throw new Error('buildRecipe price_per_execution, when provided, must be a number >= 1');
+    }
+    if (currency !== undefined && (typeof currency !== 'string' || currency.trim().length === 0)) {
+      throw new Error('buildRecipe currency, when provided, must be a non-empty string');
+    }
+    if (maxConcurrent !== undefined && (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 20)) {
+      throw new Error('buildRecipe max_concurrent, when provided, must be an integer in [1, 20]');
+    }
+    if (inputSchema !== undefined && inputSchema !== null && (typeof inputSchema !== 'object' || Array.isArray(inputSchema))) {
+      throw new Error('buildRecipe input_schema, when provided, must be an object or null');
+    }
+    if (outputSchema !== undefined && outputSchema !== null && (typeof outputSchema !== 'object' || Array.isArray(outputSchema))) {
+      throw new Error('buildRecipe output_schema, when provided, must be an object or null');
     }
 
-    const created = await this._request('POST', '/a2a/recipe', {
+    const payload = {
       sender_id: this.nodeId,
       node_id: this.nodeId,
       title,
       steps: steps.map((s, i) => ({
+        ...s,
         asset_id: s.asset_id,
         asset_type: s.asset_type,
         position: typeof s.position === 'number' ? s.position : i,
       })),
-      description: description || undefined,
-      price_per_execution: price || undefined,
-    });
+    };
+    if (description !== undefined) payload.description = description;
+    if (price !== undefined) payload.price_per_execution = price;
+    if (currency !== undefined) payload.currency = currency;
+    if (maxConcurrent !== undefined) payload.max_concurrent = maxConcurrent;
+    if (inputSchema !== undefined) payload.input_schema = inputSchema;
+    if (outputSchema !== undefined) payload.output_schema = outputSchema;
+
+    const created = await this._request('POST', '/a2a/recipe', payload);
     const recipe = (created && (created.recipe || created)) || {};
     const recipeId = recipe.id;
 
