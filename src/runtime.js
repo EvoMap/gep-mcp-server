@@ -15,13 +15,15 @@
 import { execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, renameSync, rmSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import {
   SCHEMA_VERSION,
   GEP_GENE_CATEGORIES,
+  canonicalize as sdkCanonicalize,
+  computeAssetId as sdkComputeAssetId,
   buildValidationReport as protoBuildValidationReport,
   geneToSkillMd as protoGeneToSkillMd,
   validateGene,
+  validateGeneStrictExtensions,
   validateCapsule,
 } from './protocol.js';
 import { SkillsService, defaultBundledRoot, defaultLocalRoot } from './skills.js';
@@ -98,24 +100,37 @@ export class GepRuntime {
 
     const matchingCapsule = this._selectCapsule(capsules, signals);
 
-    return {
-      ok: true,
-      signals,
-      selected_gene: {
-        id: selected.id,
-        category: selected.category,
-        strategy: selected.strategy,
-        constraints: selected.constraints,
-        validation: selected.validation,
-      },
-      mutation,
-      alternatives: alternatives.map(g => ({ id: g.id, category: g.category })),
-      matching_capsule: matchingCapsule ? {
+    const selectedGeneView = {
+      id: selected.id,
+      category: selected.category,
+      strategy: selected.strategy,
+      constraints: selected.constraints,
+      validation: selected.validation,
+    };
+    for (const k of ['parent', 'routing_hint', 'tool_policy', 'claims', 'scope', 'runtime_profile', 'verifier_profile']) {
+      if (selected[k] !== undefined) selectedGeneView[k] = selected[k];
+    }
+
+    let matchingCapsuleView = null;
+    if (matchingCapsule) {
+      matchingCapsuleView = {
         id: matchingCapsule.id,
         gene: matchingCapsule.gene,
         summary: matchingCapsule.summary,
         confidence: matchingCapsule.confidence,
-      } : null,
+      };
+      for (const k of ['parent', 'evidence_mode', 'source_type', 'content', 'proof_of_work', 'blast_radius', 'execution_trace', 'scope', 'cost_tier', 'visibility']) {
+        if (matchingCapsule[k] !== undefined) matchingCapsuleView[k] = matchingCapsule[k];
+      }
+    }
+
+    return {
+      ok: true,
+      signals,
+      selected_gene: selectedGeneView,
+      mutation,
+      alternatives: alternatives.map(g => ({ id: g.id, category: g.category })),
+      matching_capsule: matchingCapsuleView,
       memory_advice: {
         preferred: memoryAdvice.preferredGeneId,
         banned_count: memoryAdvice.bannedGeneIds.size,
@@ -275,25 +290,39 @@ export class GepRuntime {
     if (category) genes = genes.filter(g => g.category === category);
     return {
       total: genes.length,
-      genes: genes.map(g => ({
-        id: g.id,
-        category: g.category,
-        signals_match: g.signals_match,
-        strategy_steps: g.strategy?.length || 0,
-        constraints: g.constraints,
-      })),
+      genes: genes.map(g => {
+        const view = {
+          id: g.id,
+          category: g.category,
+          signals_match: g.signals_match,
+          strategy_steps: g.strategy?.length || 0,
+          constraints: g.constraints,
+        };
+        for (const k of ['parent', 'routing_hint', 'tool_policy', 'claims', 'scope', 'runtime_profile', 'verifier_profile']) {
+          if (g[k] !== undefined) view[k] = g[k];
+        }
+        return view;
+      }),
     };
   }
 
   installGene(args) {
     const { gene } = args || {};
-    if (!gene || gene.type !== 'Gene' || !gene.id) {
+    if (!gene || typeof gene !== 'object' || Array.isArray(gene) || gene.type !== 'Gene' || !gene.id) {
       return { ok: false, error: 'Invalid gene: must have type="Gene" and a non-empty id' };
     }
-    if (!gene.schema_version) gene.schema_version = SCHEMA_VERSION;
-    if (!gene.asset_id) gene.asset_id = this._computeAssetId(gene);
-    this.store.upsertGene(gene);
-    return { ok: true, installed: gene.id };
+    if (gene.category !== undefined && !GEP_GENE_CATEGORIES.includes(gene.category)) {
+      return { ok: false, error: `Invalid gene: category must be ${GEP_GENE_CATEGORIES.join('|')}` };
+    }
+    const extErrors = validateGeneStrictExtensions(gene);
+    if (extErrors.length > 0) {
+      return { ok: false, error: 'Invalid gene: ' + extErrors.join('; ') };
+    }
+    const stored = { ...gene };
+    if (!stored.schema_version) stored.schema_version = SCHEMA_VERSION;
+    if (!stored.asset_id) stored.asset_id = this._computeAssetId(stored);
+    this.store.upsertGene(stored);
+    return { ok: true, installed: stored.id };
   }
 
   exportEvolution(args) {
@@ -468,13 +497,18 @@ export class GepRuntime {
   }
 
   _hasRealErrorSignal(documentText) {
-    // Detect true error signals only in non-code/non-comment context
-    const lower = documentText.toLowerCase();
-    // Check for actual error indicators (not JSON fields)
-    const hasErrorKeyword = /\b(error|exception|failed|crash|bug|fatal|threw|stack trace)\b/.test(lower);
-    const isJsonField = /"status"\s*:\s*"error"/.test(documentText) || /^\s*".*":\s*/.test(documentText);
-
-    return hasErrorKeyword && !isJsonField;
+    // Evaluate per non-JSON line so a JSON field line earlier in the context
+    // cannot suppress a genuine error or stack trace on a subsequent line.
+    const lines = String(documentText || '').split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const isJsonFieldLine = /"status"\s*:\s*"error"/i.test(line) || /^\s*"[^"]*"\s*:/.test(line);
+      if (isJsonFieldLine) continue;
+      if (/\b(error|exception|failed|crash|bug|fatal|threw|stack trace)\b/i.test(line) || /\berrsig:/i.test(line)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   _extractSignals(context) {
@@ -672,26 +706,11 @@ export class GepRuntime {
   }
 
   _computeAssetId(obj) {
-    const clean = {};
-    for (const k of Object.keys(obj)) {
-      if (k === 'asset_id') continue;
-      clean[k] = obj[k];
-    }
-    const canonical = this._canonicalize(clean);
-    return 'sha256:' + createHash('sha256').update(canonical, 'utf8').digest('hex');
+    return sdkComputeAssetId(obj);
   }
 
   _canonicalize(obj) {
-    if (obj === null || obj === undefined) return 'null';
-    if (typeof obj === 'boolean') return obj ? 'true' : 'false';
-    if (typeof obj === 'number') return Number.isFinite(obj) ? String(obj) : 'null';
-    if (typeof obj === 'string') return JSON.stringify(obj);
-    if (Array.isArray(obj)) return '[' + obj.map(x => this._canonicalize(x)).join(',') + ']';
-    if (typeof obj === 'object') {
-      const keys = Object.keys(obj).sort();
-      return '{' + keys.map(k => JSON.stringify(k) + ':' + this._canonicalize(obj[k])).join(',') + '}';
-    }
-    return 'null';
+    return sdkCanonicalize(obj);
   }
 }
 

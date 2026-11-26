@@ -1,13 +1,28 @@
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
 import {
   SCHEMA_VERSION,
   GEP_GENE_CATEGORIES,
   GEP_OUTCOME_STATUSES,
+  GEP_SOURCE_TYPES,
+  GEP_CAPSULE_VISIBILITIES,
+  GEP_CAPSULE_COST_TIERS,
+  GEP_GENE_ROUTING_TIERS,
+  GEP_GENE_REASONING_LEVELS,
+  GEP_GENE_TOOL_POLICY_SEVERITIES,
+  GEP_GENE_CLAIM_KINDS,
+  GEP_GENE_RUNTIME_ENV_CLASSES,
+  GEP_GENE_VERIFIER_DECISIONS,
+  GEP_EVIDENCE_MODES,
+  REFERENCE_ONLY_EVIDENCE_MODE,
   PROTOCOL_NAME,
   PROTOCOL_VERSION,
   buildExecutionTrace,
   buildValidationReport,
   canonicalize,
+  classifyCapsuleEvidence,
   computeAssetId,
   geneToSkillMd,
   sanitizeSkillName,
@@ -15,26 +30,46 @@ import {
   stampAsset,
   toTitleCase,
   validateCapsule,
+  validateCapsuleEvidence,
   validateGene,
   validateValidationReport,
 } from '../protocol.js';
 
 describe('protocol primitives', () => {
-  it('exports current schema and protocol versions in lockstep with evolver', () => {
-    // Bump these together with evolver-private-dev/src/gep/contentHash.js
-    // and a2aProtocol.js. If the Hub is on a newer version this assertion
-    // is the canary.
-    expect(SCHEMA_VERSION).toBe('1.7.0');
+  it('exports current schema and protocol versions in lockstep with @evomap/gep-sdk', async () => {
+    const sdk = await import('@evomap/gep-sdk');
+    expect(SCHEMA_VERSION).toBe(sdk.SCHEMA_VERSION);
+    const [maj, min] = SCHEMA_VERSION.split('.').map(Number);
+    expect(maj > 1 || (maj === 1 && min >= 14)).toBe(true);
     expect(PROTOCOL_NAME).toBe('gep-a2a');
     expect(PROTOCOL_VERSION).toBe('1.0.0');
   });
 
-  it('re-exports protocol constants from @evomap/gep-sdk', async () => {
+  it('re-exports protocol constants and evidence validators from @evomap/gep-sdk', async () => {
     const sdk = await import('@evomap/gep-sdk');
     expect(GEP_GENE_CATEGORIES).toEqual(sdk.GEP_GENE_CATEGORIES);
     expect(GEP_OUTCOME_STATUSES).toEqual(sdk.GEP_OUTCOME_STATUSES);
+    expect(GEP_SOURCE_TYPES).toEqual(sdk.GEP_SOURCE_TYPES);
+    expect(GEP_CAPSULE_VISIBILITIES).toEqual(sdk.GEP_CAPSULE_VISIBILITIES);
+    expect(GEP_CAPSULE_COST_TIERS).toEqual(sdk.GEP_CAPSULE_COST_TIERS);
+    expect(GEP_GENE_ROUTING_TIERS).toEqual(sdk.GEP_GENE_ROUTING_TIERS);
+    expect(GEP_GENE_REASONING_LEVELS).toEqual(sdk.GEP_GENE_REASONING_LEVELS);
+    expect(GEP_GENE_TOOL_POLICY_SEVERITIES).toEqual(sdk.GEP_GENE_TOOL_POLICY_SEVERITIES);
+    expect(GEP_GENE_CLAIM_KINDS).toEqual(sdk.GEP_GENE_CLAIM_KINDS);
+    expect(GEP_GENE_RUNTIME_ENV_CLASSES).toEqual(sdk.GEP_GENE_RUNTIME_ENV_CLASSES);
+    expect(GEP_GENE_VERIFIER_DECISIONS).toEqual(sdk.GEP_GENE_VERIFIER_DECISIONS);
+    expect(GEP_EVIDENCE_MODES).toEqual(sdk.GEP_EVIDENCE_MODES);
+    expect(REFERENCE_ONLY_EVIDENCE_MODE).toBe('reference_only');
+    expect(classifyCapsuleEvidence).toBe(sdk.classifyCapsuleEvidence);
+    expect(validateCapsuleEvidence).toBe(sdk.validateCapsuleEvidence);
     expect(GEP_GENE_CATEGORIES).toContain('explore');
     expect(GEP_OUTCOME_STATUSES).toEqual(['success', 'failed']);
+  });
+
+  it('resolves gep-spec-v1.md from installed @evomap/gep-sdk package exports', () => {
+    const req = createRequire(import.meta.url);
+    const specPath = req.resolve('@evomap/gep-sdk/spec/gep-spec-v1.md');
+    expect(existsSync(specPath)).toBe(true);
   });
 
   it('canonicalize sorts object keys deterministically', () => {
@@ -55,7 +90,7 @@ describe('protocol primitives', () => {
   it('stampAsset adds asset_id and schema_version idempotently', () => {
     const g = { type: 'Gene', id: 'g1' };
     stampAsset(g);
-    expect(g.schema_version).toBe('1.7.0');
+    expect(g.schema_version).toBe(SCHEMA_VERSION);
     expect(g.asset_id).toMatch(/^sha256:/);
     const previousId = g.asset_id;
     // Stamping again with same content yields same id
@@ -178,9 +213,160 @@ describe('validation', () => {
     expect(validateCapsule(c)).toEqual([]);
   });
 
+  it('rejects object-shaped content on execution Capsule without reference_only evidence_mode', () => {
+    const c = { ...validCapsule };
+    delete c.strategy;
+    c.content = { text: 'a'.repeat(60), mime: 'text/plain' };
+    const errs = validateCapsule(c);
+    expect(errs.some((e) => /capsule\.content on execution capsules must be a string/.test(e))).toBe(true);
+  });
+
   it('validateValidationReport requires overall_ok boolean', () => {
     expect(validateValidationReport({ type: 'ValidationReport', commands: [], overall_ok: true })).toEqual([]);
     expect(validateValidationReport({ type: 'ValidationReport', commands: [] })).toContain('report.overall_ok must be a boolean');
+  });
+
+  it('accepts Gene with K_auto coordinates (1.13.0) and routing/tool_policy (1.12.0) without stripping', () => {
+    const kautoGene = {
+      ...validGene,
+      routing_hint: { tier: 'mid', reasoning_level: 'high' },
+      tool_policy: { allow_only: ['Read', 'Edit'], deny: ['Bash'], severity: 'warn' },
+      claims: [{ predicate: 'exit_code==0', kind: 'behavioral' }],
+      scope: { signals: ['log_error'], predicate: 'matches(log_error)' },
+      runtime_profile: { runtime: 'node@22', env_class: 'ci' },
+      verifier_profile: { verifier: 'vitest@3', decision: 'pass' },
+    };
+    expect(validateGene(kautoGene)).toEqual([]);
+    const bareCopy = stampAsset({ ...validGene });
+    const kautoCopy = stampAsset({ ...kautoGene });
+    expect(kautoCopy.claims).toEqual(kautoGene.claims);
+    expect(kautoCopy.scope).toEqual(kautoGene.scope);
+    expect(kautoCopy.runtime_profile).toEqual(kautoGene.runtime_profile);
+    expect(kautoCopy.verifier_profile).toEqual(kautoGene.verifier_profile);
+    expect(kautoCopy.routing_hint).toEqual(kautoGene.routing_hint);
+    expect(kautoCopy.tool_policy).toEqual(kautoGene.tool_policy);
+    expect(kautoCopy.asset_id).not.toBe(bareCopy.asset_id);
+  });
+
+  it('rejects Gene with malformed K_auto, routing_hint, tool_policy, or unknown fields (negative controls)', () => {
+    expect(validateGene({ ...validGene, unknown_extra: 1 }).some((e) => /unsupported field "unknown_extra"/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, routing_hint: { tier: 'ultra' } }).some((e) => /routing_hint\.tier/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, routing_hint: { bogus: true } }).some((e) => /routing_hint contains unsupported/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, tool_policy: { allow_only: [] } }).some((e) => /tool_policy\.allow_only/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, tool_policy: { severity: 'fatal' } }).some((e) => /tool_policy\.severity/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, claims: [{ predicate: '   ' }] }).some((e) => /claims\[0\]\.predicate/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, claims: [{ predicate: 'ok', kind: 'magic' }] }).some((e) => /claims\[0\]\.kind/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, claims: [{ predicate: 'ok', extra: 1 }] }).some((e) => /claims\[0\] contains unsupported/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, scope: { signals: [] } }).some((e) => /scope\.signals/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, parent: 'sha256:' + 'c'.repeat(64) })).toEqual([]);
+    expect(validateGene({ ...validGene, parent: null }).some((e) => /gene\.parent/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, parent: 'gene_logical_id' }).some((e) => /gene\.parent/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, runtime_profile: { env_class: 'laptop' } }).some((e) => /runtime_profile\.env_class/.test(e))).toBe(true);
+    expect(validateGene({ ...validGene, verifier_profile: { decision: 'maybe' } }).some((e) => /verifier_profile\.decision/.test(e))).toBe(true);
+  });
+
+  it('accepts valid reference_only Capsule (1.14.0) including UTF-8 text and omitted env_fingerprint', () => {
+    const text = '引用资料：GEP 1.14.0 非执行型证据契约';
+    const refCapsule = {
+      type: 'Capsule',
+      id: 'c_ref_1',
+      trigger: ['capability_gap'],
+      gene: 'gene_ref',
+      summary: 'Reference capsule documenting non-execution evidence contract',
+      confidence: 0.95,
+      evidence_mode: 'reference_only',
+      source_type: 'reference',
+      blast_radius: { files: 0, lines: 0 },
+      execution_trace: [],
+      diff: null,
+      content: { text, mime: 'text/plain' },
+      proof_of_work: {
+        kind: 'artifact_hash',
+        artifact_hash: {
+          sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+          mime: 'text/plain',
+          size: Buffer.byteLength(text, 'utf8'),
+        },
+      },
+      outcome: { status: 'success', score: 0.95 },
+    };
+    expect(validateCapsule(refCapsule)).toEqual([]);
+    const stamped = stampAsset({ ...refCapsule });
+    expect(stamped.evidence_mode).toBe('reference_only');
+    expect(stamped.content).toEqual({ text, mime: 'text/plain' });
+    expect(stamped.proof_of_work).toEqual(refCapsule.proof_of_work);
+  });
+
+  it('rejects tampered or malformed reference_only Capsule and invalid 1.8–1.12 fields (negative controls)', () => {
+    const text = '引用资料：你好';
+    const validRef = {
+      type: 'Capsule',
+      id: 'c_ref_bad',
+      trigger: ['capability_gap'],
+      summary: 'Reference capsule negative control fixture',
+      confidence: 0.9,
+      evidence_mode: 'reference_only',
+      source_type: 'reference',
+      blast_radius: { files: 0, lines: 0 },
+      execution_trace: [],
+      diff: null,
+      content: { text, mime: 'text/plain' },
+      proof_of_work: {
+        kind: 'artifact_hash',
+        artifact_hash: {
+          sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+          mime: 'text/plain',
+          size: Buffer.byteLength(text, 'utf8'),
+        },
+      },
+      outcome: { status: 'success', score: 0.9 },
+    };
+    expect(validateCapsule({ ...validRef, evidence_mode: 'bogus' }).some((e) => /unsupported_evidence_mode/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validRef, source_type: 'generated' }).some((e) => /source_type_must_be_reference/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validRef, blast_radius: { files: 1, lines: 0 } }).some((e) => /blast_radius_must_be_zero/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validRef, execution_trace: [{ stage: 'validate' }] }).some((e) => /execution_trace_must_be_empty/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validRef, diff: 'non-null diff' }).some((e) => /diff_must_be_absent_or_null/.test(e))).toBe(true);
+    expect(
+      validateCapsule({
+        ...validRef,
+        proof_of_work: {
+          kind: 'artifact_hash',
+          artifact_hash: { ...validRef.proof_of_work.artifact_hash, size: text.length },
+        },
+      }).some((e) => /artifact_size_mismatch/.test(e)),
+    ).toBe(true);
+    expect(
+      validateCapsule({
+        ...validRef,
+        proof_of_work: {
+          kind: 'artifact_hash',
+          artifact_hash: { ...validRef.proof_of_work.artifact_hash, sha256: '0'.repeat(64) },
+        },
+      }).some((e) => /artifact_sha256_mismatch/.test(e)),
+    ).toBe(true);
+
+    // Optional strict Capsule fields (1.8.0–1.12.0) positive + negative controls
+    expect(
+      validateCapsule({
+        ...validCapsule,
+        source_type: 'user_authored',
+        visibility: 'public',
+        cost_tier: 'cheap',
+        scope: ['node', 'mcp'],
+        pack_of: ['sha256:' + 'f'.repeat(64)],
+        author: { handle: '17', evox_install_id: 'evox_1' },
+        derivation_tokens: { input_tokens: 100, output_tokens: 50, total_tokens: 150, basis: 'measured' },
+        resolution_status: 'resolved_by_evidence',
+      }),
+    ).toEqual([]);
+    expect(validateCapsule({ ...validCapsule, parent: 'sha256:' + 'd'.repeat(64) })).toEqual([]);
+    expect(validateCapsule({ ...validCapsule, parent: null }).some((e) => /capsule\.parent/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, parent: 'cap_logical_id' }).some((e) => /capsule\.parent/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, unknown_capsule_key: true }).some((e) => /unsupported field "unknown_capsule_key"/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, pack_of: ['not-a-sha'] }).some((e) => /pack_of/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, author: { handle: '17' } }).some((e) => /author/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, derivation_tokens: { input_tokens: 1, output_tokens: 2 } }).some((e) => /derivation_tokens\.total_tokens/.test(e))).toBe(true);
+    expect(validateCapsule({ ...validCapsule, visibility: 'world' }).some((e) => /visibility/.test(e))).toBe(true);
   });
 });
 
@@ -238,7 +424,7 @@ describe('buildValidationReport', () => {
     expect(r.commands).toHaveLength(2);
     expect(r.commands[1].stderr).toBe('lint failed');
     expect(r.asset_id).toMatch(/^sha256:/);
-    expect(r.schema_version).toBe('1.7.0');
+    expect(r.schema_version).toBe(SCHEMA_VERSION);
   });
 
   it('falls back to commands derived from results when commands omitted', () => {
@@ -309,7 +495,7 @@ describe('skill md conversion', () => {
     expect(md).toContain('- `log_error`');
     expect(md).toContain('## Strategy');
     expect(md).toContain('## Validation');
-    expect(md).toContain('Schema version: `1.7.0`');
+    expect(md).toContain(`Schema version: \`${SCHEMA_VERSION}\``);
   });
 
   it('sanitizeTags drops short / pure-numeric / timestamp-bearing entries', () => {

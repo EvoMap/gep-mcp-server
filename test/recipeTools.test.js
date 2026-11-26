@@ -72,6 +72,66 @@ describe('gep_build_recipe (P4d)', () => {
     const steps = Array.from({ length: 21 }, () => ({ asset_id: A64, asset_type: 'Gene' }));
     await expect(rt.buildRecipe({ title: 'Valid title', steps })).rejects.toThrow(/20 steps/);
   });
+
+  it('preserves optional recipe.schema.json step and top-level fields without stripping', async () => {
+    const { rt, calls } = makeRuntime();
+    await rt.buildRecipe({
+      title: 'Full Schema Recipe',
+      description: 'Exercises step guards and recipe concurrency/schema metadata',
+      price_per_execution: 5,
+      currency: 'Credit',
+      max_concurrent: 4,
+      input_schema: { type: 'object', properties: { repo: { type: 'string' } } },
+      output_schema: { type: 'object', properties: { ok: { type: 'boolean' } } },
+      steps: [
+        {
+          asset_id: A64,
+          asset_type: 'Gene',
+          condition: 'signals.includes("log_error")',
+          parameters: { retries: 3 },
+          optional: true,
+          fallback_gene_id: 'gene_fallback_1',
+        },
+      ],
+    });
+    const sent = calls[0].body;
+    expect(sent.price_per_execution).toBe(5);
+    expect(sent.currency).toBe('Credit');
+    expect(sent.max_concurrent).toBe(4);
+    expect(sent.input_schema).toEqual({ type: 'object', properties: { repo: { type: 'string' } } });
+    expect(sent.output_schema).toEqual({ type: 'object', properties: { ok: { type: 'boolean' } } });
+    expect(sent.steps[0]).toEqual({
+      asset_id: A64,
+      asset_type: 'Gene',
+      position: 0,
+      condition: 'signals.includes("log_error")',
+      parameters: { retries: 3 },
+      optional: true,
+      fallback_gene_id: 'gene_fallback_1',
+    });
+  });
+
+  it('rejects malformed recipe step/top-level schema fields (negative controls)', async () => {
+    const { rt } = makeRuntime();
+    await expect(
+      rt.buildRecipe({ title: 'Valid title', steps: [{ asset_id: A64, asset_type: 'Gene', position: -1 }] }),
+    ).rejects.toThrow(/position/);
+    await expect(
+      rt.buildRecipe({ title: 'Valid title', steps: [{ asset_id: A64, asset_type: 'Gene', parameters: ['bad'] }] }),
+    ).rejects.toThrow(/parameters/);
+    await expect(
+      rt.buildRecipe({ title: 'Valid title', steps: [{ asset_id: A64, asset_type: 'Gene', optional: 'yes' }] }),
+    ).rejects.toThrow(/optional/);
+    await expect(
+      rt.buildRecipe({ title: 'Valid title', price_per_execution: 0, steps: [{ asset_id: A64, asset_type: 'Gene' }] }),
+    ).rejects.toThrow(/price_per_execution/);
+    await expect(
+      rt.buildRecipe({ title: 'Valid title', max_concurrent: 25, steps: [{ asset_id: A64, asset_type: 'Gene' }] }),
+    ).rejects.toThrow(/max_concurrent/);
+    await expect(
+      rt.buildRecipe({ title: 'x'.repeat(201), steps: [{ asset_id: A64, asset_type: 'Gene' }] }),
+    ).rejects.toThrow(/at most 200/);
+  });
 });
 
 describe('gep_reuse_recipe (P4d)', () => {
