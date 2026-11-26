@@ -65,15 +65,27 @@ describe('bearer auth selection', () => {
     expect(captured).toBe('Bearer secret_y');
   });
 
-  it('uses api_key on /a2a/memory/recall (read-mostly endpoint)', async () => {
-    let captured;
+  it('uses node_secret on memory endpoints when both credentials are present', async () => {
+    const captured = [];
     const fetchImpl = vi.fn(async (url, opts) => {
-      captured = opts.headers.Authorization;
+      captured.push({ url, authorization: opts.headers.Authorization });
       return buildResponse({ ok: true, body: { matches: [] } });
     });
     const runtime = buildRuntime({ fetchImpl, apiKey: 'api_x', nodeSecret: 'secret_y' });
     await runtime.recall({ query: 'q' });
-    expect(captured).toBe('Bearer api_x');
+    await runtime.recordOutcome({
+      geneId: 'ad_hoc',
+      signals: ['test_failure'],
+      status: 'success',
+      score: 1,
+      summary: 'Fixed memory auth by selecting the node-scoped bearer',
+    });
+    await runtime.getStatus();
+    expect(captured).toEqual([
+      { url: 'https://hub.test/a2a/memory/recall', authorization: 'Bearer secret_y' },
+      { url: 'https://hub.test/a2a/memory/record', authorization: 'Bearer secret_y' },
+      { url: 'https://hub.test/a2a/memory/status?node_id=node_test', authorization: 'Bearer secret_y' },
+    ]);
   });
 
   it('falls back to api_key on publish if no node_secret given (legacy callers)', async () => {
