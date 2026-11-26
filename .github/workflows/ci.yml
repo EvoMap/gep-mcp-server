@@ -13,7 +13,7 @@ permissions:
 jobs:
   test:
     # GitHub-hosted by default; TEST_RUNNER is a dedicated opt-in JSON label
-    # array kept separate from CLA_RUNNER / PUBLISH_RUNNER trust boundaries.
+    # array kept separate from CLA_RUNNER and ephemeral ubuntu-latest publish.
     runs-on: ${{ vars.TEST_RUNNER && fromJSON(vars.TEST_RUNNER) || 'ubuntu-latest' }}
     strategy:
       fail-fast: false

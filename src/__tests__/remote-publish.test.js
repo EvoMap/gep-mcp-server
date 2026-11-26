@@ -100,6 +100,21 @@ describe('bearer auth selection', () => {
     await runtime.publishBundle({ gene: validGene, capsule: validCapsule });
     expect(captured).toBe('Bearer api_x');
   });
+
+  it('prefers api_key on account-scoped read endpoints when both credentials are present', async () => {
+    const captured = [];
+    const fetchImpl = vi.fn(async (url, opts) => {
+      captured.push({ url, authorization: opts.headers.Authorization });
+      return buildResponse({ ok: true, body: { did: 'did:evomap:node_test', entries: [] } });
+    });
+    const runtime = buildRuntime({ fetchImpl, apiKey: 'api_x', nodeSecret: 'secret_y' });
+    await runtime.getIdentity({});
+    await runtime.getAuditLogs({ limit: 5 });
+    expect(captured).toEqual([
+      { url: 'https://hub.test/a2a/identity/node_test', authorization: 'Bearer api_x' },
+      { url: 'https://hub.test/a2a/audit/node_test?sender_id=node_test&limit=5&offset=0', authorization: 'Bearer api_x' },
+    ]);
+  });
 });
 
 describe('publishBundle', () => {

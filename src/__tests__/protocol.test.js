@@ -213,6 +213,14 @@ describe('validation', () => {
     expect(validateCapsule(c)).toEqual([]);
   });
 
+  it('rejects object-shaped content on execution Capsule without reference_only evidence_mode', () => {
+    const c = { ...validCapsule };
+    delete c.strategy;
+    c.content = { text: 'a'.repeat(60), mime: 'text/plain' };
+    const errs = validateCapsule(c);
+    expect(errs.some((e) => /capsule\.content on execution capsules must be a string/.test(e))).toBe(true);
+  });
+
   it('validateValidationReport requires overall_ok boolean', () => {
     expect(validateValidationReport({ type: 'ValidationReport', commands: [], overall_ok: true })).toEqual([]);
     expect(validateValidationReport({ type: 'ValidationReport', commands: [] })).toContain('report.overall_ok must be a boolean');

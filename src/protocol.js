@@ -559,26 +559,37 @@ export function validateCapsule(capsule) {
   }
 
   // Schema 1.14.0: non-execution reference-only Capsule evidence contract.
+  // Only skip the execution substance gate when the capsule is actually in
+  // REFERENCE_ONLY_EVIDENCE_MODE (or already failed evidence_mode validation),
+  // so any future execution evidence_mode still undergoes substance checks.
   if (capsule.evidence_mode !== undefined) {
     const evCheck = validateCapsuleEvidence(capsule);
     if (!evCheck.valid) {
       for (const r of evCheck.reasons) {
         errors.push(`capsule.${r.path || 'evidence_mode'}: ${r.code}`);
       }
+      return errors;
     }
-    return errors;
+    if (evCheck.mode === REFERENCE_ONLY_EVIDENCE_MODE) {
+      return errors;
+    }
+  }
+
+  // On execution capsules (no reference_only evidence_mode), object-shaped
+  // content has no artifact_hash integrity check and is not allowed; Hub
+  // execution capsules accept string content/diff/code_snippet or strategy[].
+  if (capsule.content !== undefined && capsule.content !== null && typeof capsule.content !== 'string') {
+    errors.push('capsule.content on execution capsules must be a string (use evidence_mode="reference_only" with proof_of_work.artifact_hash for structured reference content)');
   }
 
   // Substance gate for execution capsules: the Hub rejects capsules that have
   // only metadata. At least one of content (>=50 chars), strategy (>=1 step),
-  // code_snippet (>=50 chars), or diff (>=50 chars or structured object) must
-  // be present so a future reader can act on the capsule.
-  const hasContent = (typeof capsule.content === 'string' && capsule.content.length >= 50)
-    || (isPlainObject(capsule.content) && typeof capsule.content.text === 'string' && capsule.content.text.length >= 50);
+  // code_snippet (>=50 chars), or diff (>=50 chars) must be present so a
+  // future reader can act on the capsule.
+  const hasContent = typeof capsule.content === 'string' && capsule.content.length >= 50;
   const hasStrategy = Array.isArray(capsule.strategy) && capsule.strategy.length > 0;
   const hasCode = typeof capsule.code_snippet === 'string' && capsule.code_snippet.length >= 50;
-  const hasDiff = (typeof capsule.diff === 'string' && capsule.diff.length >= 50)
-    || (isPlainObject(capsule.diff) && Object.keys(capsule.diff).length > 0);
+  const hasDiff = typeof capsule.diff === 'string' && capsule.diff.length >= 50;
   if (!hasContent && !hasStrategy && !hasCode && !hasDiff) {
     errors.push('capsule must include at least one of content (>=50 chars), strategy (>=1 step), code_snippet (>=50 chars), or diff (>=50 chars)');
   }
