@@ -16,6 +16,10 @@ import {
   GEP_GENE_RUNTIME_ENV_CLASSES,
   GEP_GENE_VERIFIER_DECISIONS,
   GEP_EVIDENCE_MODES,
+  GEP_WORK_ORDER_TIERS,
+  GEP_WORK_ORDER_FUNDING_MODES,
+  GEP_SWARM_HANDOFF_STAGES,
+  GEP_WORK_ORDER_TIER_FLOORS,
   REFERENCE_ONLY_EVIDENCE_MODE,
   PROTOCOL_NAME,
   PROTOCOL_VERSION,
@@ -40,7 +44,7 @@ describe('protocol primitives', () => {
     const sdk = await import('@evomap/gep-sdk');
     expect(SCHEMA_VERSION).toBe(sdk.SCHEMA_VERSION);
     const [maj, min] = SCHEMA_VERSION.split('.').map(Number);
-    expect(maj > 1 || (maj === 1 && min >= 14)).toBe(true);
+    expect(maj > 1 || (maj === 1 && min >= 15)).toBe(true);
     expect(PROTOCOL_NAME).toBe('gep-a2a');
     expect(PROTOCOL_VERSION).toBe('1.0.0');
   });
@@ -59,6 +63,10 @@ describe('protocol primitives', () => {
     expect(GEP_GENE_RUNTIME_ENV_CLASSES).toEqual(sdk.GEP_GENE_RUNTIME_ENV_CLASSES);
     expect(GEP_GENE_VERIFIER_DECISIONS).toEqual(sdk.GEP_GENE_VERIFIER_DECISIONS);
     expect(GEP_EVIDENCE_MODES).toEqual(sdk.GEP_EVIDENCE_MODES);
+    expect(GEP_WORK_ORDER_TIERS).toEqual(sdk.GEP_WORK_ORDER_TIERS);
+    expect(GEP_WORK_ORDER_FUNDING_MODES).toEqual(sdk.GEP_WORK_ORDER_FUNDING_MODES);
+    expect(GEP_SWARM_HANDOFF_STAGES).toEqual(sdk.GEP_SWARM_HANDOFF_STAGES);
+    expect(GEP_WORK_ORDER_TIER_FLOORS).toEqual(sdk.GEP_WORK_ORDER_TIER_FLOORS);
     expect(REFERENCE_ONLY_EVIDENCE_MODE).toBe('reference_only');
     expect(classifyCapsuleEvidence).toBe(sdk.classifyCapsuleEvidence);
     expect(validateCapsuleEvidence).toBe(sdk.validateCapsuleEvidence);
