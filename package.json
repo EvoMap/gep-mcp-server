@@ -41,7 +41,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@evomap/gep-sdk": "^1.14.0",
+    "@evomap/gep-sdk": "^1.15.0",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
